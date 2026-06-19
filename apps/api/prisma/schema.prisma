@@ -1,0 +1,42 @@
+// FootConnect base schema.
+// Models are expanded per roadmap phase. Phase 0 ships only the User foundation.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  PLAYER
+  PITCH_OWNER
+  ADMIN
+}
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  PRO
+}
+
+model User {
+  id           String      @id @default(uuid())
+  email        String      @unique
+  passwordHash String
+  displayName  String
+  roles        UserRole[]  @default([PLAYER])
+  skillLevel   SkillLevel?
+  position     String?
+  lat          Float?
+  lng          Float?
+  bio          String?
+  avatarUrl    String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@map("users")
+}

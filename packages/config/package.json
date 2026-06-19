@@ -1,0 +1,13 @@
+{
+  "name": "@footconnect/config",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    "./tsconfig.base.json": "./tsconfig.base.json",
+    "./prettier": "./prettier.config.mjs"
+  },
+  "files": [
+    "tsconfig.base.json",
+    "prettier.config.mjs"
+  ]
+}
