@@ -22,7 +22,8 @@ const envSchema = z.object({
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
   // CORS / cookies.
-  CORS_ORIGIN: z.string().default("http://localhost:3000"),
+  // Comma-separated list of allowed origins (Next dev :3000, Expo web :8081).
+  CORS_ORIGIN: z.string().default("http://localhost:3000,http://localhost:8081"),
   COOKIE_SECURE: z
     .enum(["true", "false"])
     .default("false")

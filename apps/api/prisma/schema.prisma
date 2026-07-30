@@ -38,5 +38,73 @@ model User {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
+  teamMemberships     TeamMembership[]
+  invitationsReceived Invitation[]     @relation("invitee")
+  invitationsSent     Invitation[]     @relation("inviter")
+
   @@map("users")
+}
+
+enum TeamMemberRole {
+  CAPTAIN
+  MEMBER
+}
+
+enum MembershipStatus {
+  ACTIVE
+  LEFT
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+model Team {
+  id          String           @id @default(uuid())
+  name        String
+  logoUrl     String?
+  lat         Float?
+  lng         Float?
+  skillRating Int              @default(1000)
+  wins        Int              @default(0)
+  losses      Int              @default(0)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  members     TeamMembership[]
+  invitations Invitation[]
+
+  @@map("teams")
+}
+
+model TeamMembership {
+  id       String           @id @default(uuid())
+  team     Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId   String
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
+  role     TeamMemberRole   @default(MEMBER)
+  status   MembershipStatus @default(ACTIVE)
+  joinedAt DateTime         @default(now())
+
+  @@unique([teamId, userId])
+  @@map("team_memberships")
+}
+
+model Invitation {
+  id          String           @id @default(uuid())
+  team        Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId      String
+  invitee     User             @relation("invitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+  inviteeId   String
+  inviter     User             @relation("inviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  inviterId   String
+  status      InvitationStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  respondedAt DateTime?
+
+  @@unique([teamId, inviteeId])
+  @@map("invitations")
 }

@@ -1,8 +1,12 @@
 import type {
   AuthResponse,
+  CreateTeamInput,
   HealthStatus,
+  Invitation,
   LoginInput,
   RegisterInput,
+  TeamDetail,
+  UpdateTeamInput,
 } from "@footconnect/shared";
 
 export interface ApiClientOptions {
@@ -40,6 +44,17 @@ export interface ApiClient {
   /** Pass a refresh token (mobile); omit to rely on the httpOnly cookie (web). */
   refresh(refreshToken?: string): Promise<AuthResponse>;
   logout(refreshToken?: string): Promise<void>;
+  // Teams
+  createTeam(input: CreateTeamInput): Promise<TeamDetail>;
+  getMyTeams(): Promise<TeamDetail[]>;
+  getTeam(teamId: string): Promise<TeamDetail>;
+  updateTeam(teamId: string, input: UpdateTeamInput): Promise<TeamDetail>;
+  inviteToTeam(teamId: string, email: string): Promise<void>;
+  getInvitations(): Promise<Invitation[]>;
+  acceptInvitation(invitationId: string): Promise<TeamDetail>;
+  declineInvitation(invitationId: string): Promise<void>;
+  removeTeamMember(teamId: string, userId: string): Promise<void>;
+  leaveTeam(teamId: string, userId: string): Promise<void>;
 }
 
 /**
@@ -91,6 +106,29 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       post<AuthResponse>("/api/v1/auth/refresh", refreshToken ? { refreshToken } : {}),
     logout: async (refreshToken) => {
       await post<void>("/api/v1/auth/logout", refreshToken ? { refreshToken } : {});
+    },
+    createTeam: (input) => post<TeamDetail>("/api/v1/teams", input),
+    getMyTeams: () => request<TeamDetail[]>("/api/v1/teams/mine"),
+    getTeam: (teamId) => request<TeamDetail>(`/api/v1/teams/${teamId}`),
+    updateTeam: (teamId, input) =>
+      request<TeamDetail>(`/api/v1/teams/${teamId}`, {
+        method: "PATCH",
+        body: json(input),
+      }),
+    inviteToTeam: async (teamId, email) => {
+      await post<void>(`/api/v1/teams/${teamId}/invitations`, { email });
+    },
+    getInvitations: () => request<Invitation[]>("/api/v1/teams/invitations"),
+    acceptInvitation: (invitationId) =>
+      post<TeamDetail>(`/api/v1/teams/invitations/${invitationId}/accept`),
+    declineInvitation: async (invitationId) => {
+      await post<void>(`/api/v1/teams/invitations/${invitationId}/decline`);
+    },
+    removeTeamMember: async (teamId, userId) => {
+      await request<void>(`/api/v1/teams/${teamId}/members/${userId}`, { method: "DELETE" });
+    },
+    leaveTeam: async (teamId, userId) => {
+      await request<void>(`/api/v1/teams/${teamId}/members/${userId}`, { method: "DELETE" });
     },
   };
 }

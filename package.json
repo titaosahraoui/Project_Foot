@@ -13,8 +13,8 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
-    "docker:up": "docker compose -f infra/docker-compose.yml up -d",
-    "docker:down": "docker compose -f infra/docker-compose.yml down"
+    "docker:up": "docker compose --env-file .env -f infra/docker-compose.yml up -d",
+    "docker:down": "docker compose --env-file .env -f infra/docker-compose.yml down"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
