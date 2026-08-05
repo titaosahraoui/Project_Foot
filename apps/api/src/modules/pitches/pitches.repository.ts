@@ -1,0 +1,149 @@
+import { Prisma } from "@prisma/client";
+import type { CreatePitchInput, CreatePitchSlotInput, PitchQuery, UpdatePitchInput } from "@footconnect/shared";
+import { prisma } from "../../lib/prisma";
+
+const pitchInclude = {
+  slots: {
+    orderBy: [{ dayOfWeek: "asc" as const }, { startTime: "asc" as const }],
+  },
+} satisfies Prisma.PitchInclude;
+
+export type PitchWithSlots = Prisma.PitchGetPayload<{ include: typeof pitchInclude }>;
+
+export function createPitch(ownerId: string, data: CreatePitchInput): Promise<PitchWithSlots> {
+  return prisma.pitch.create({
+    data: {
+      ownerId,
+      name: data.name,
+      description: data.description ?? null,
+      address: data.address,
+      city: data.city,
+      lat: data.lat,
+      lng: data.lng,
+      surface: data.surface,
+      size: data.size,
+      pricePerHour: data.pricePerHour,
+      amenities: data.amenities ?? [],
+      photos: data.photos ?? [],
+    },
+    include: pitchInclude,
+  });
+}
+
+export function findPitchById(id: string): Promise<PitchWithSlots | null> {
+  return prisma.pitch.findUnique({
+    where: { id },
+    include: pitchInclude,
+  });
+}
+
+export function findMyPitches(ownerId: string): Promise<PitchWithSlots[]> {
+  return prisma.pitch.findMany({
+    where: { ownerId },
+    include: pitchInclude,
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function findPitches(query: PitchQuery): Promise<PitchWithSlots[]> {
+  const where: Prisma.PitchWhereInput = {
+    isActive: true,
+  };
+
+  if (query.city) {
+    where.city = { contains: query.city, mode: "insensitive" };
+  }
+  if (query.surface) {
+    where.surface = query.surface;
+  }
+  if (query.size) {
+    where.size = query.size;
+  }
+  if (query.maxPrice !== undefined) {
+    where.pricePerHour = { lte: query.maxPrice };
+  }
+
+  const pitches = await prisma.pitch.findMany({
+    where,
+    include: pitchInclude,
+    orderBy: { createdAt: "desc" },
+  });
+
+  // If lat/lng provided, filter by radius using Haversine formula
+  if (query.lat !== undefined && query.lng !== undefined && query.radiusKm) {
+    const lat1 = query.lat;
+    const lng1 = query.lng;
+    const radius = query.radiusKm;
+
+    return pitches.filter((p) => {
+      const dLat = ((p.lat - lat1) * Math.PI) / 180;
+      const dLng = ((p.lng - lng1) * Math.PI) / 180;
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos((lat1 * Math.PI) / 180) *
+          Math.cos((p.lat * Math.PI) / 180) *
+          Math.sin(dLng / 2) *
+          Math.sin(dLng / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const distanceKm = 6371 * c;
+      return distanceKm <= radius;
+    });
+  }
+
+  return pitches;
+}
+
+export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWithSlots> {
+  return prisma.pitch.update({
+    where: { id },
+    data: {
+      ...(data.name !== undefined && { name: data.name }),
+      ...(data.description !== undefined && { description: data.description }),
+      ...(data.address !== undefined && { address: data.address }),
+      ...(data.city !== undefined && { city: data.city }),
+      ...(data.lat !== undefined && { lat: data.lat }),
+      ...(data.lng !== undefined && { lng: data.lng }),
+      ...(data.surface !== undefined && { surface: data.surface }),
+      ...(data.size !== undefined && { size: data.size }),
+      ...(data.pricePerHour !== undefined && { pricePerHour: data.pricePerHour }),
+      ...(data.amenities !== undefined && { amenities: data.amenities }),
+      ...(data.photos !== undefined && { photos: data.photos }),
+      ...(data.isActive !== undefined && { isActive: data.isActive }),
+    },
+    include: pitchInclude,
+  });
+}
+
+export function findPitchSlots(pitchId: string) {
+  return prisma.pitchSlot.findMany({
+    where: { pitchId },
+    orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
+  });
+}
+
+export async function upsertPitchSlots(pitchId: string, slots: CreatePitchSlotInput[]) {
+  const operations = slots.map((s) =>
+    prisma.pitchSlot.upsert({
+      where: {
+        pitchId_dayOfWeek_startTime: {
+          pitchId,
+          dayOfWeek: s.dayOfWeek,
+          startTime: s.startTime,
+        },
+      },
+      create: {
+        pitchId,
+        dayOfWeek: s.dayOfWeek,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        isBookable: s.isBookable ?? true,
+      },
+      update: {
+        endTime: s.endTime,
+        isBookable: s.isBookable ?? true,
+      },
+    }),
+  );
+
+  return prisma.$transaction(operations);
+}

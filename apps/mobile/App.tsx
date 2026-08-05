@@ -5,12 +5,13 @@ import { NavigationContainer, type Theme as NavTheme } from "@react-navigation/n
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import { colors } from "@footconnect/ui";
 import { fontMap } from "./src/theme/fonts";
 import { Icon, type IconName } from "./src/components/ui";
+import { api } from "./src/lib/api";
 import { AuthProvider, useAuth } from "./src/lib/auth-context";
 import type { AuthStackParamList, SquadStackParamList, TabParamList } from "./src/navigation";
 import { LoginScreen } from "./src/screens/LoginScreen";
@@ -74,6 +75,14 @@ const tabIcon: Record<keyof TabParamList, IconName> = {
 };
 
 function Tabs() {
+  const { data: invitations } = useQuery({
+    queryKey: ["invitations"],
+    queryFn: () => api.getInvitations(),
+    refetchInterval: 15000,
+  });
+
+  const pendingCount = invitations?.length ?? 0;
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -92,7 +101,14 @@ function Tabs() {
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Squad" component={SquadNavigator} />
+      <Tab.Screen
+        name="Squad"
+        component={SquadNavigator}
+        options={{
+          tabBarBadge: pendingCount > 0 ? pendingCount : undefined,
+          tabBarBadgeStyle: { backgroundColor: colors.brand, color: colors.surface1, fontSize: 10, fontFamily: "Archivo_700Bold" },
+        }}
+      />
       <Tab.Screen name="Play" component={PlayScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>

@@ -44,13 +44,21 @@ function AuthPanel() {
   }
 
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="flex flex-col items-center gap-4">
       <p>
         Signed in as <strong>{user.displayName}</strong> ({user.email})
       </p>
-      <button onClick={() => void logout()} className="text-sm text-gray-500 underline">
-        Sign out
-      </button>
+      <div className="flex gap-3">
+        <Link
+          href="/pitches"
+          className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-semibold text-white shadow-md hover:bg-emerald-500 transition-all"
+        >
+          Manage My Pitches 🏟️
+        </Link>
+        <button onClick={() => void logout()} className="text-sm text-gray-500 underline py-2">
+          Sign out
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,11 +1,18 @@
 import type {
   AuthResponse,
+  CreatePitchInput,
+  CreatePitchSlotInput,
   CreateTeamInput,
   HealthStatus,
   Invitation,
   LoginInput,
+  Pitch,
+  PitchDetail,
+  PitchQuery,
+  PitchSlot,
   RegisterInput,
   TeamDetail,
+  UpdatePitchInput,
   UpdateTeamInput,
 } from "@footconnect/shared";
 
@@ -55,6 +62,14 @@ export interface ApiClient {
   declineInvitation(invitationId: string): Promise<void>;
   removeTeamMember(teamId: string, userId: string): Promise<void>;
   leaveTeam(teamId: string, userId: string): Promise<void>;
+  // Pitches
+  getPitches(query?: PitchQuery): Promise<Pitch[]>;
+  getMyPitches(): Promise<Pitch[]>;
+  getPitch(id: string): Promise<PitchDetail>;
+  createPitch(input: CreatePitchInput): Promise<PitchDetail>;
+  updatePitch(id: string, input: UpdatePitchInput): Promise<PitchDetail>;
+  getPitchSlots(pitchId: string): Promise<PitchSlot[]>;
+  createPitchSlots(pitchId: string, slots: CreatePitchSlotInput[]): Promise<PitchSlot[]>;
 }
 
 /**
@@ -130,5 +145,28 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     leaveTeam: async (teamId, userId) => {
       await request<void>(`/api/v1/teams/${teamId}/members/${userId}`, { method: "DELETE" });
     },
+    getPitches: (query) => {
+      const params = new URLSearchParams();
+      if (query?.city) params.set("city", query.city);
+      if (query?.surface) params.set("surface", query.surface);
+      if (query?.size) params.set("size", query.size);
+      if (query?.maxPrice !== undefined) params.set("maxPrice", String(query.maxPrice));
+      if (query?.lat !== undefined) params.set("lat", String(query.lat));
+      if (query?.lng !== undefined) params.set("lng", String(query.lng));
+      if (query?.radiusKm !== undefined) params.set("radiusKm", String(query.radiusKm));
+      const qs = params.toString();
+      return request<Pitch[]>(`/api/v1/pitches${qs ? `?${qs}` : ""}`);
+    },
+    getMyPitches: () => request<Pitch[]>("/api/v1/pitches/mine"),
+    getPitch: (id) => request<PitchDetail>(`/api/v1/pitches/${id}`),
+    createPitch: (input) => post<PitchDetail>("/api/v1/pitches", input),
+    updatePitch: (id, input) =>
+      request<PitchDetail>(`/api/v1/pitches/${id}`, {
+        method: "PATCH",
+        body: json(input),
+      }),
+    getPitchSlots: (pitchId) => request<PitchSlot[]>(`/api/v1/pitches/${pitchId}/slots`),
+    createPitchSlots: (pitchId, slots) =>
+      post<PitchSlot[]>(`/api/v1/pitches/${pitchId}/slots`, { slots }),
   };
 }

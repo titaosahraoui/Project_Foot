@@ -41,8 +41,59 @@ model User {
   teamMemberships     TeamMembership[]
   invitationsReceived Invitation[]     @relation("invitee")
   invitationsSent     Invitation[]     @relation("inviter")
+  pitches             Pitch[]
 
   @@map("users")
+}
+
+enum PitchSurface {
+  NATURAL_GRASS
+  ARTIFICIAL_TURF
+  INDOOR_PARQUET
+  CONCRETE
+}
+
+enum PitchSize {
+  FIVE_A_SIDE
+  SEVEN_A_SIDE
+  ELEVEN_A_SIDE
+}
+
+model Pitch {
+  id           String       @id @default(uuid())
+  ownerId      String
+  owner        User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  address      String
+  city         String
+  lat          Float
+  lng          Float
+  surface      PitchSurface
+  size         PitchSize
+  pricePerHour Float
+  amenities    String[]     @default([])
+  photos       String[]     @default([])
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  slots        PitchSlot[]
+
+  @@map("pitches")
+}
+
+model PitchSlot {
+  id         String   @id @default(uuid())
+  pitchId    String
+  pitch      Pitch    @relation(fields: [pitchId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int      // 0 = Sunday, 6 = Saturday
+  startTime  String   // "09:00"
+  endTime    String   // "10:00"
+  isBookable Boolean  @default(true)
+
+  @@unique([pitchId, dayOfWeek, startTime])
+  @@map("pitch_slots")
 }
 
 enum TeamMemberRole {
