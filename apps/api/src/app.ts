@@ -21,7 +21,8 @@ export function createApp(): Express {
   const app = express();
 
   app.use(helmet());
-  app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+  const allowedOrigins = env.CORS_ORIGIN.split(",").map((o) => o.trim());
+  app.use(cors({ origin: allowedOrigins, credentials: true }));
   app.use(express.json());
   app.use(cookieParser());
   app.use(requestId);

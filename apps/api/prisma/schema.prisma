@@ -38,5 +38,124 @@ model User {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
+  teamMemberships     TeamMembership[]
+  invitationsReceived Invitation[]     @relation("invitee")
+  invitationsSent     Invitation[]     @relation("inviter")
+  pitches             Pitch[]
+
   @@map("users")
+}
+
+enum PitchSurface {
+  NATURAL_GRASS
+  ARTIFICIAL_TURF
+  INDOOR_PARQUET
+  CONCRETE
+}
+
+enum PitchSize {
+  FIVE_A_SIDE
+  SEVEN_A_SIDE
+  ELEVEN_A_SIDE
+}
+
+model Pitch {
+  id           String       @id @default(uuid())
+  ownerId      String
+  owner        User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  address      String
+  city         String
+  lat          Float
+  lng          Float
+  surface      PitchSurface
+  size         PitchSize
+  pricePerHour Float
+  amenities    String[]     @default([])
+  photos       String[]     @default([])
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  slots        PitchSlot[]
+
+  @@map("pitches")
+}
+
+model PitchSlot {
+  id         String   @id @default(uuid())
+  pitchId    String
+  pitch      Pitch    @relation(fields: [pitchId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int      // 0 = Sunday, 6 = Saturday
+  startTime  String   // "09:00"
+  endTime    String   // "10:00"
+  isBookable Boolean  @default(true)
+
+  @@unique([pitchId, dayOfWeek, startTime])
+  @@map("pitch_slots")
+}
+
+enum TeamMemberRole {
+  CAPTAIN
+  MEMBER
+}
+
+enum MembershipStatus {
+  ACTIVE
+  LEFT
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+model Team {
+  id          String           @id @default(uuid())
+  name        String
+  logoUrl     String?
+  lat         Float?
+  lng         Float?
+  skillRating Int              @default(1000)
+  wins        Int              @default(0)
+  losses      Int              @default(0)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  members     TeamMembership[]
+  invitations Invitation[]
+
+  @@map("teams")
+}
+
+model TeamMembership {
+  id       String           @id @default(uuid())
+  team     Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId   String
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
+  role     TeamMemberRole   @default(MEMBER)
+  status   MembershipStatus @default(ACTIVE)
+  joinedAt DateTime         @default(now())
+
+  @@unique([teamId, userId])
+  @@map("team_memberships")
+}
+
+model Invitation {
+  id          String           @id @default(uuid())
+  team        Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId      String
+  invitee     User             @relation("invitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+  inviteeId   String
+  inviter     User             @relation("inviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  inviterId   String
+  status      InvitationStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  respondedAt DateTime?
+
+  @@unique([teamId, inviteeId])
+  @@map("invitations")
 }

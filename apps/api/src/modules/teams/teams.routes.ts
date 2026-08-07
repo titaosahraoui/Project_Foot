@@ -1,4 +1,21 @@
-import { createStubRouter } from "../_stub";
+import { Router } from "express";
+import { asyncHandler } from "../../middleware/async-handler";
+import { requireAuth } from "../../middleware/require-auth";
+import * as c from "./teams.controller";
 
-// Phase 2: create team, invite players, roster, captain role.
-export const teamsRouter = createStubRouter("teams");
+export const teamsRouter: Router = Router();
+
+// All team routes require authentication.
+teamsRouter.use(requireAuth);
+
+// Static routes must come before the dynamic "/:id" routes.
+teamsRouter.get("/invitations", asyncHandler(c.myInvitationsHandler));
+teamsRouter.post("/invitations/:id/accept", asyncHandler(c.acceptInvitationHandler));
+teamsRouter.post("/invitations/:id/decline", asyncHandler(c.declineInvitationHandler));
+teamsRouter.get("/mine", asyncHandler(c.getMyTeamsHandler));
+
+teamsRouter.post("/", asyncHandler(c.createTeamHandler));
+teamsRouter.get("/:id", asyncHandler(c.getTeamHandler));
+teamsRouter.patch("/:id", asyncHandler(c.updateTeamHandler));
+teamsRouter.post("/:id/invitations", asyncHandler(c.inviteHandler));
+teamsRouter.delete("/:id/members/:userId", asyncHandler(c.removeMemberHandler));

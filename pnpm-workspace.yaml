@@ -2,6 +2,18 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# pnpm v11: config moved from .npmrc to here (camelCase).
+autoInstallPeers: true
+strictPeerDependencies: false
+
+# Expo / React Native / Metro require.resolve() packages from the project root.
+# Hoist them so the strict pnpm node_modules layout doesn't break Metro bundling.
+publicHoistPattern:
+  - "*expo*"
+  - "*react-native*"
+  - "@react-native/*"
+  - "metro*"
+
 allowBuilds:
   argon2: true
   "@prisma/client": true
@@ -10,3 +22,4 @@ allowBuilds:
   prisma: true
   sharp: true
   unrs-resolver: true
+

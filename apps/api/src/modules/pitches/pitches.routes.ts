@@ -1,4 +1,17 @@
-import { createStubRouter } from "../_stub";
+import { Router } from "express";
+import { asyncHandler } from "../../middleware/async-handler";
+import { requireAuth } from "../../middleware/require-auth";
+import * as c from "./pitches.controller";
 
-// Phase 3: pitch CRUD, availability slots, owner dashboard.
-export const pitchesRouter = createStubRouter("pitches");
+export const pitchesRouter: Router = Router();
+
+// Public routes
+pitchesRouter.get("/", asyncHandler(c.searchPitchesHandler));
+pitchesRouter.get("/mine", requireAuth, asyncHandler(c.getMyPitchesHandler));
+pitchesRouter.get("/:id", asyncHandler(c.getPitchHandler));
+pitchesRouter.get("/:id/slots", asyncHandler(c.getPitchSlotsHandler));
+
+// Protected routes (pitch owners)
+pitchesRouter.post("/", requireAuth, asyncHandler(c.createPitchHandler));
+pitchesRouter.patch("/:id", requireAuth, asyncHandler(c.updatePitchHandler));
+pitchesRouter.post("/:id/slots", requireAuth, asyncHandler(c.createPitchSlotsHandler));

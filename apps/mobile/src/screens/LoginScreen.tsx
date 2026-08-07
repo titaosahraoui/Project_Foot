@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { loginSchema } from "@footconnect/shared";
-import { colors, radii, spacing } from "@footconnect/ui";
+import { colors, gradients, spacing } from "@footconnect/ui";
 import { useAuth } from "../lib/auth-context";
-import type { RootStackParamList } from "../navigation";
+import { Button, Input, Logo, Text } from "../components/ui";
+import type { AuthStackParamList } from "../navigation";
 
-type Props = NativeStackScreenProps<RootStackParamList, "Login">;
+type Props = NativeStackScreenProps<AuthStackParamList, "Login">;
 
 export function LoginScreen({ navigation }: Props) {
   const { login } = useAuth();
@@ -33,42 +36,49 @@ export function LoginScreen({ navigation }: Props) {
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Welcome back</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        placeholderTextColor={colors.textMuted}
-        autoCapitalize="none"
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        placeholderTextColor={colors.textMuted}
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
-      {error && <Text style={styles.error}>{error}</Text>}
-      <Pressable style={styles.button} onPress={onSubmit} disabled={submitting}>
-        <Text style={styles.buttonText}>{submitting ? "Signing in…" : "Sign in"}</Text>
-      </Pressable>
-      <Pressable onPress={() => navigation.navigate("Register")}>
-        <Text style={styles.link}>No account? Create one</Text>
-      </Pressable>
-    </View>
+    <LinearGradient colors={gradients.hero as unknown as readonly [string, string]} style={styles.flex}>
+      <SafeAreaView style={styles.flex}>
+        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <View style={styles.container}>
+            <Logo size={56} />
+            <Text variant="displayM" style={styles.title}>
+              WELCOME{"\n"}BACK
+            </Text>
+            <Text variant="bodySmall" style={styles.sub}>
+              Book. Play. Rank up.
+            </Text>
+
+            <View style={styles.form}>
+              <Input
+                label="Email"
+                placeholder="you@example.com"
+                autoCapitalize="none"
+                keyboardType="email-address"
+                value={email}
+                onChangeText={setEmail}
+              />
+              <Input label="Password" placeholder="••••••••" secureTextEntry value={password} onChangeText={setPassword} />
+              {error ? <Text color={colors.danger}>{error}</Text> : null}
+              <Button label="Sign in" loading={submitting} onPress={onSubmit} size="lg" />
+            </View>
+
+            <Pressable onPress={() => navigation.navigate("Register")} style={styles.link}>
+              <Text variant="bodySmall" color={colors.textSecondary}>
+                No account? <Text color={colors.brand}>Create one</Text>
+              </Text>
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: "center", padding: spacing.lg, gap: spacing.md, backgroundColor: colors.background },
-  title: { color: colors.text, fontSize: 28, fontWeight: "700", marginBottom: spacing.sm },
-  input: { backgroundColor: colors.surface, color: colors.text, borderRadius: radii.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border },
-  button: { backgroundColor: colors.primary, borderRadius: radii.md, padding: spacing.md, alignItems: "center" },
-  buttonText: { color: colors.text, fontWeight: "700" },
-  link: { color: colors.textMuted, textAlign: "center" },
-  error: { color: colors.danger },
+  flex: { flex: 1 },
+  container: { flex: 1, justifyContent: "center", paddingHorizontal: spacing.gutter, gap: spacing.sm },
+  title: { marginTop: spacing.lg },
+  sub: { marginBottom: spacing.lg },
+  form: { gap: spacing.md, marginBottom: spacing.lg },
+  link: { alignItems: "center" },
 });
