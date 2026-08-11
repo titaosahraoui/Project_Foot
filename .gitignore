@@ -14,6 +14,9 @@ out/
 # Turbo
 .turbo/
 
+# Local Git worktrees
+.worktrees/
+
 # Environment
 .env
 .env.local
