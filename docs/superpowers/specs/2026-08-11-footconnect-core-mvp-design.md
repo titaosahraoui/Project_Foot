@@ -123,18 +123,18 @@ The repository is beyond Phase 0. It already contains working or partial slices 
 
 ## Modular Monolith Boundaries
 
-| Module | Owns |
-|---|---|
-| `auth` | Registration, login, refresh sessions, and authorization primitives |
-| `users` | Player profiles and account roles |
-| `teams` | Teams, memberships, captaincy, player cards, formations, and lineups |
-| `pitches` | Venues, facilities, pricing, and recurring availability rules |
-| `matchmaking` | Team availability, opponent recommendations, and challenges |
-| `bookings` | Exact reservations, collision prevention, offline payment state, booking outcomes, and reliability projections |
-| `matches` | Scheduled matches, participant snapshots, score submissions, consensus, and result disputes |
-| `ratings` | Team Elo, competitive records, rating history, and leaderboards |
-| `notifications` | In-app events, push delivery, deadlines, and reminders |
-| `admin` | Audited booking-outcome and match-result resolution workflows |
+| Module          | Owns                                                                                                           |
+| --------------- | -------------------------------------------------------------------------------------------------------------- |
+| `auth`          | Registration, login, refresh sessions, and authorization primitives                                            |
+| `users`         | Player profiles and account roles                                                                              |
+| `teams`         | Teams, memberships, captaincy, player cards, formations, and lineups                                           |
+| `pitches`       | Venues, facilities, pricing, and recurring availability rules                                                  |
+| `matchmaking`   | Team availability, opponent recommendations, and challenges                                                    |
+| `bookings`      | Exact reservations, collision prevention, offline payment state, booking outcomes, and reliability projections |
+| `matches`       | Scheduled matches, participant snapshots, score submissions, consensus, and result disputes                    |
+| `ratings`       | Team Elo, competitive records, rating history, and leaderboards                                                |
+| `notifications` | In-app events, push delivery, deadlines, and reminders                                                         |
+| `admin`         | Audited booking-outcome and match-result resolution workflows                                                  |
 
 Every module keeps the established route → controller → service → repository structure. Shared request and response contracts live in `@footconnect/shared`. A module may call another module's public service but may not import its repository or access its tables through a different repository.
 
@@ -272,7 +272,7 @@ Consensus behaves as follows:
 5. If one party is missing and the two submitted scores agree, the system waits for the submission deadline and then starts the same 24-hour provisional-majority window.
 6. Fewer than two agreeing submissions enter admin review after the submission deadline.
 
-Score submissions may be collected before booking outcomes finalize, but a result cannot verify while a resolved team outcome says `NO_SHOW`, `LATE_CANCELLATION`, or `EXCLUDED_OWNER_CANCELLATION`. A score consensus that conflicts with the booking outcome becomes an admin dispute. This prevents Elo from changing for a match that the reliability workflow says was not played.
+Score submissions may be collected before booking outcomes finalize, but a result verifies only after both team outcomes resolve as `COMPLETED`. A `NO_SHOW`, `LATE_CANCELLATION`, or `EXCLUDED_OWNER_CANCELLATION` outcome turns any score consensus into an admin dispute. This prevents Elo from changing for a match that the reliability workflow says was not played.
 
 Admin resolution records the selected score, reason, resolver, and timestamp. It never deletes or replaces original submissions. Elo remains unchanged while a result is awaiting submissions, provisional, or disputed.
 
