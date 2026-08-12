@@ -82,10 +82,13 @@ export async function refresh(token: string): Promise<AuthResponse> {
 
 export async function logout(token: string | undefined): Promise<void> {
   if (!token) return;
+  let payload: RefreshTokenPayload;
   try {
-    const payload = verifyRefreshToken(token);
-    await repo.revokeRefreshSession(payload.jti);
+    payload = verifyRefreshToken(token);
   } catch {
     // Invalid/expired token on logout is a no-op.
+    return;
   }
+
+  await repo.revokeRefreshSession(payload.jti);
 }

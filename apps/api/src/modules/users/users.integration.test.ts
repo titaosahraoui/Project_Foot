@@ -122,4 +122,10 @@ describe("player profile API (integration)", () => {
     expect(response.status).toBe(400);
     expect(response.body.code).toBe("VALIDATION_ERROR");
   });
+
+  it("rejects non-canonical positions at the database boundary", async () => {
+    await expect(
+      prisma.$executeRaw`UPDATE "users" SET "position" = 'ST' WHERE "id" = ${userId}`,
+    ).rejects.toThrow();
+  });
 });

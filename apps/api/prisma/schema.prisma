@@ -23,6 +23,14 @@ enum SkillLevel {
   PRO
 }
 
+enum PlayerPosition {
+  GK
+  DEF
+  MID
+  FWD
+  FLEX
+}
+
 model User {
   id           String      @id @default(uuid())
   email        String      @unique
@@ -30,7 +38,7 @@ model User {
   displayName  String
   roles        UserRole[]  @default([PLAYER])
   skillLevel   SkillLevel?
-  position     String?
+  position     PlayerPosition?
   lat          Float?
   lng          Float?
   bio          String?

@@ -1,7 +1,8 @@
+import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { afterAll, describe, expect, it } from "vitest";
 import { createApp } from "../../app";
-import { verifyRefreshToken } from "../../lib/jwt";
+import { signRefreshToken, verifyRefreshToken } from "../../lib/jwt";
 import { prisma } from "../../lib/prisma";
 import { authHeader, disconnectTestDependencies, uniqueEmail } from "../../test/integration-helpers";
 
@@ -15,6 +16,7 @@ afterAll(async () => {
 });
 
 describe("auth flow (integration)", () => {
+  let userId = "";
   let accessToken = "";
   let refreshToken = "";
 
@@ -26,6 +28,7 @@ describe("auth flow (integration)", () => {
     expect(res.body.user.email).toBe(email);
     expect(res.body.accessToken).toBeTruthy();
     expect(res.body.refreshToken).toBeTruthy();
+    userId = res.body.user.id;
 
     const payload = verifyRefreshToken(res.body.refreshToken);
     await expect(
@@ -97,6 +100,38 @@ describe("auth flow (integration)", () => {
     expect(reuse.status).toBe(401);
 
     refreshToken = res.body.refreshToken;
+  });
+
+  it("allows exactly one concurrent refresh rotation", async () => {
+    const responses = await Promise.all([
+      request(app).post("/api/v1/auth/refresh").send({ refreshToken }),
+      request(app).post("/api/v1/auth/refresh").send({ refreshToken }),
+    ]);
+    const statuses = responses.map((response) => response.status).sort();
+
+    expect(statuses).toEqual([200, 401]);
+    refreshToken = responses.find((response) => response.status === 200)!.body.refreshToken;
+  });
+
+  it("rejects a refresh token with an unknown session", async () => {
+    const token = signRefreshToken(userId, randomUUID());
+
+    const response = await request(app).post("/api/v1/auth/refresh").send({ refreshToken: token });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects a refresh token whose database session is expired", async () => {
+    const jti = randomUUID();
+    await prisma.refreshSession.create({
+      data: { jti, userId, expiresAt: new Date("2000-01-01T00:00:00.000Z") },
+    });
+
+    const response = await request(app)
+      .post("/api/v1/auth/refresh")
+      .send({ refreshToken: signRefreshToken(userId, jti) });
+
+    expect(response.status).toBe(401);
   });
 
   it("logs out and invalidates the refresh token", async () => {

@@ -108,7 +108,7 @@ function ProfileEditor({
   const mutation = useMutation({
     mutationFn: (input: UpdateProfileInput) => api.updateMyProfile(input),
     onSuccess: (updated) => {
-      queryClient.setQueryData(["me"], updated);
+      queryClient.setQueryData(["me", updated.id], updated);
       setUser(updated);
       setDisplayName(updated.displayName);
       setPosition(updated.position);
@@ -243,9 +243,10 @@ function ProfileEditor({
 export function ProfileScreen() {
   const { user } = useAuth();
   const { data, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ["me"],
+    queryKey: ["me", user?.id],
     queryFn: () => api.getMyProfile(),
     initialData: user ?? undefined,
+    enabled: Boolean(user),
   });
 
   if (isLoading || !data) {

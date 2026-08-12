@@ -20,6 +20,8 @@ const user: User = {
 
 describe("toAuthUser", () => {
   it("rejects a persisted free-form position at the public response boundary", () => {
-    expect(() => toAuthUser({ ...user, position: "ST" })).toThrow();
+    const legacyUser = { ...user, position: "ST" } as unknown as User;
+
+    expect(() => toAuthUser(legacyUser)).toThrow();
   });
 });
