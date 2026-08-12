@@ -42,8 +42,24 @@ model User {
   invitationsReceived Invitation[]     @relation("invitee")
   invitationsSent     Invitation[]     @relation("inviter")
   pitches             Pitch[]
+  refreshSessions     RefreshSession[]
 
   @@map("users")
+}
+
+model RefreshSession {
+  jti           String   @id
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  replacedByJti String?
+  createdAt     DateTime @default(now())
+  lastUsedAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_sessions")
 }
 
 enum PitchSurface {

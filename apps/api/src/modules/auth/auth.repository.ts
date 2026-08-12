@@ -1,7 +1,4 @@
 import { prisma } from "../../lib/prisma";
-import { redis } from "../../lib/redis";
-
-const jtiKey = (jti: string) => `refresh:${jti}`;
 
 export function findByEmail(email: string) {
   return prisma.user.findUnique({ where: { email } });
@@ -15,16 +12,52 @@ export function createUser(input: { email: string; passwordHash: string; display
   return prisma.user.create({ data: input });
 }
 
-/** Store a valid refresh-token id (jti) with the same TTL as the token. */
-export async function storeRefreshJti(jti: string, userId: string, ttlSeconds: number): Promise<void> {
-  await redis.set(jtiKey(jti), userId, "EX", ttlSeconds);
+export function createRefreshSession(input: {
+  jti: string;
+  userId: string;
+  expiresAt: Date;
+}) {
+  return prisma.refreshSession.create({ data: input });
 }
 
-export async function isRefreshJtiValid(jti: string): Promise<boolean> {
-  const value = await redis.get(jtiKey(jti));
-  return value !== null;
+export function rotateRefreshSession(input: {
+  currentJti: string;
+  userId: string;
+  replacementJti: string;
+  replacementExpiresAt: Date;
+}): Promise<boolean> {
+  const now = new Date();
+  return prisma.$transaction(async (tx) => {
+    const consumed = await tx.refreshSession.updateMany({
+      where: {
+        jti: input.currentJti,
+        userId: input.userId,
+        revokedAt: null,
+        expiresAt: { gt: now },
+      },
+      data: {
+        revokedAt: now,
+        replacedByJti: input.replacementJti,
+        lastUsedAt: now,
+      },
+    });
+    if (consumed.count !== 1) return false;
+
+    await tx.refreshSession.create({
+      data: {
+        jti: input.replacementJti,
+        userId: input.userId,
+        expiresAt: input.replacementExpiresAt,
+      },
+    });
+    return true;
+  });
 }
 
-export async function revokeRefreshJti(jti: string): Promise<void> {
-  await redis.del(jtiKey(jti));
+export async function revokeRefreshSession(jti: string): Promise<void> {
+  const now = new Date();
+  await prisma.refreshSession.updateMany({
+    where: { jti, revokedAt: null },
+    data: { revokedAt: now, lastUsedAt: now },
+  });
 }
