@@ -2,16 +2,15 @@ import request from "supertest";
 import { afterAll, describe, expect, it } from "vitest";
 import { createApp } from "../../app";
 import { prisma } from "../../lib/prisma";
-import { redis } from "../../lib/redis";
+import { authHeader, disconnectTestDependencies, uniqueEmail } from "../../test/integration-helpers";
 
 const app = createApp();
-const email = `test_${Date.now()}@example.com`;
+const email = uniqueEmail("auth");
 const password = "password123";
 
 afterAll(async () => {
   await prisma.user.deleteMany({ where: { email } });
-  await prisma.$disconnect();
-  redis.disconnect();
+  await disconnectTestDependencies();
 });
 
 describe("auth flow (integration)", () => {
@@ -52,7 +51,7 @@ describe("auth flow (integration)", () => {
   it("returns the profile with a valid token", async () => {
     const res = await request(app)
       .get("/api/v1/users/me")
-      .set("Authorization", `Bearer ${accessToken}`);
+      .set(authHeader(accessToken));
     expect(res.status).toBe(200);
     expect(res.body.email).toBe(email);
   });

@@ -2,12 +2,16 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../app";
 import { prisma } from "../../lib/prisma";
-import { redis } from "../../lib/redis";
+import {
+  authHeader,
+  disconnectTestDependencies,
+  registerTestUser,
+  uniqueEmail,
+} from "../../test/integration-helpers";
 
 const app = createApp();
-const ts = Date.now();
-const captainEmail = `cap_${ts}@test.com`;
-const memberEmail = `mem_${ts}@test.com`;
+const captainEmail = uniqueEmail("captain");
+const memberEmail = uniqueEmail("member");
 const password = "password123";
 
 let captainToken = "";
@@ -16,17 +20,10 @@ let memberId = "";
 let teamId = "";
 let invitationId = "";
 
-async function register(email: string, displayName: string) {
-  const res = await request(app)
-    .post("/api/v1/auth/register")
-    .send({ email, password, displayName });
-  return res.body as { accessToken: string; user: { id: string } };
-}
-
 beforeAll(async () => {
-  const cap = await register(captainEmail, "Captain");
+  const cap = await registerTestUser(app, { email: captainEmail, password, displayName: "Captain" });
   captainToken = cap.accessToken;
-  const mem = await register(memberEmail, "Member");
+  const mem = await registerTestUser(app, { email: memberEmail, password, displayName: "Member" });
   memberToken = mem.accessToken;
   memberId = mem.user.id;
 });
@@ -34,15 +31,15 @@ beforeAll(async () => {
 afterAll(async () => {
   if (teamId) await prisma.team.deleteMany({ where: { id: teamId } });
   await prisma.user.deleteMany({ where: { email: { in: [captainEmail, memberEmail] } } });
-  await prisma.$disconnect();
-  redis.disconnect();
+  await disconnectTestDependencies();
 });
-
-const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
 describe("teams flow (integration)", () => {
   it("creates a team with the creator as captain", async () => {
-    const res = await request(app).post("/api/v1/teams").set(auth(captainToken)).send({ name: "FC Test" });
+    const res = await request(app)
+      .post("/api/v1/teams")
+      .set(authHeader(captainToken))
+      .send({ name: "FC Test" });
     expect(res.status).toBe(201);
     expect(res.body.memberCount).toBe(1);
     expect(res.body.members[0].role).toBe("CAPTAIN");
@@ -52,7 +49,7 @@ describe("teams flow (integration)", () => {
   it("rejects inviting an unknown email", async () => {
     const res = await request(app)
       .post(`/api/v1/teams/${teamId}/invitations`)
-      .set(auth(captainToken))
+      .set(authHeader(captainToken))
       .send({ email: "nobody@nowhere.test" });
     expect(res.status).toBe(404);
   });
@@ -60,7 +57,7 @@ describe("teams flow (integration)", () => {
   it("lets the captain invite a registered user", async () => {
     const res = await request(app)
       .post(`/api/v1/teams/${teamId}/invitations`)
-      .set(auth(captainToken))
+      .set(authHeader(captainToken))
       .send({ email: memberEmail });
     expect(res.status).toBe(201);
   });
@@ -68,13 +65,13 @@ describe("teams flow (integration)", () => {
   it("blocks a non-captain from inviting", async () => {
     const res = await request(app)
       .post(`/api/v1/teams/${teamId}/invitations`)
-      .set(auth(memberToken))
+      .set(authHeader(memberToken))
       .send({ email: "someone@else.test" });
     expect(res.status).toBe(403);
   });
 
   it("shows the invitee their pending invitation", async () => {
-    const res = await request(app).get("/api/v1/teams/invitations").set(auth(memberToken));
+    const res = await request(app).get("/api/v1/teams/invitations").set(authHeader(memberToken));
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
     expect(res.body[0].team.id).toBe(teamId);
@@ -84,7 +81,7 @@ describe("teams flow (integration)", () => {
   it("accepts the invitation and grows the roster to 2", async () => {
     const res = await request(app)
       .post(`/api/v1/teams/invitations/${invitationId}/accept`)
-      .set(auth(memberToken));
+      .set(authHeader(memberToken));
     expect(res.status).toBe(200);
     expect(res.body.memberCount).toBe(2);
   });
@@ -92,7 +89,7 @@ describe("teams flow (integration)", () => {
   it("rejects re-inviting an existing member", async () => {
     const res = await request(app)
       .post(`/api/v1/teams/${teamId}/invitations`)
-      .set(auth(captainToken))
+      .set(authHeader(captainToken))
       .send({ email: memberEmail });
     expect(res.status).toBe(409);
   });
@@ -100,10 +97,10 @@ describe("teams flow (integration)", () => {
   it("lets a member leave, shrinking the roster", async () => {
     const leave = await request(app)
       .delete(`/api/v1/teams/${teamId}/members/${memberId}`)
-      .set(auth(memberToken));
+      .set(authHeader(memberToken));
     expect(leave.status).toBe(204);
 
-    const team = await request(app).get(`/api/v1/teams/${teamId}`).set(auth(captainToken));
+    const team = await request(app).get(`/api/v1/teams/${teamId}`).set(authHeader(captainToken));
     expect(team.body.memberCount).toBe(1);
   });
 

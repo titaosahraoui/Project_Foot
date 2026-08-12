@@ -2,29 +2,26 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../app";
 import { prisma } from "../../lib/prisma";
-import { redis } from "../../lib/redis";
+import {
+  authHeader,
+  disconnectTestDependencies,
+  registerTestUser,
+  uniqueEmail,
+} from "../../test/integration-helpers";
 
 const app = createApp();
-const ts = Date.now();
-const ownerEmail = `pitch_owner_${ts}@test.com`;
-const playerEmail = `pitch_player_${ts}@test.com`;
+const ownerEmail = uniqueEmail("pitch_owner");
+const playerEmail = uniqueEmail("pitch_player");
 const password = "password123";
 
 let ownerToken = "";
 let playerToken = "";
 let pitchId = "";
 
-async function register(email: string, displayName: string) {
-  const res = await request(app)
-    .post("/api/v1/auth/register")
-    .send({ email, password, displayName });
-  return res.body as { accessToken: string; user: { id: string } };
-}
-
 beforeAll(async () => {
-  const owner = await register(ownerEmail, "Owner");
+  const owner = await registerTestUser(app, { email: ownerEmail, password, displayName: "Owner" });
   ownerToken = owner.accessToken;
-  const player = await register(playerEmail, "Player");
+  const player = await registerTestUser(app, { email: playerEmail, password, displayName: "Player" });
   playerToken = player.accessToken;
 });
 
@@ -34,17 +31,14 @@ afterAll(async () => {
     await prisma.pitch.deleteMany({ where: { id: pitchId } });
   }
   await prisma.user.deleteMany({ where: { email: { in: [ownerEmail, playerEmail] } } });
-  await prisma.$disconnect();
-  redis.disconnect();
+  await disconnectTestDependencies();
 });
-
-const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
 describe("pitches flow (integration)", () => {
   it("creates a pitch as an owner", async () => {
     const res = await request(app)
       .post("/api/v1/pitches")
-      .set(auth(ownerToken))
+      .set(authHeader(ownerToken))
       .send({
         name: "Camp Nou Amateur",
         description: "Great turf pitch",
@@ -103,7 +97,7 @@ describe("pitches flow (integration)", () => {
   it("allows owner to configure pitch slots", async () => {
     const res = await request(app)
       .post(`/api/v1/pitches/${pitchId}/slots`)
-      .set(auth(ownerToken))
+      .set(authHeader(ownerToken))
       .send({
         slots: [
           { dayOfWeek: 1, startTime: "18:00", endTime: "19:00", isBookable: true },
@@ -118,7 +112,7 @@ describe("pitches flow (integration)", () => {
   it("blocks a non-owner from setting pitch slots", async () => {
     const res = await request(app)
       .post(`/api/v1/pitches/${pitchId}/slots`)
-      .set(auth(playerToken))
+      .set(authHeader(playerToken))
       .send({
         slots: [{ dayOfWeek: 2, startTime: "10:00", endTime: "11:00" }],
       });
@@ -135,7 +129,7 @@ describe("pitches flow (integration)", () => {
   it("allows owner to update pitch details", async () => {
     const res = await request(app)
       .patch(`/api/v1/pitches/${pitchId}`)
-      .set(auth(ownerToken))
+      .set(authHeader(ownerToken))
       .send({ pricePerHour: 90 });
 
     expect(res.status).toBe(200);
