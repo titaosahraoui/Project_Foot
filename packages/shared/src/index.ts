@@ -1,4 +1,5 @@
 export * from "./common";
+export * from "./domain";
 export * from "./health";
 export * from "./user";
 export * from "./auth";
