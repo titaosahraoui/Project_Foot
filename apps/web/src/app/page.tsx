@@ -50,6 +50,12 @@ function AuthPanel() {
       </p>
       <div className="flex gap-3">
         <Link
+          href="/profile"
+          className="rounded-xl border border-emerald-600 px-5 py-2 text-sm font-semibold text-emerald-600 transition-colors hover:bg-emerald-50 dark:hover:bg-emerald-950"
+        >
+          Profile settings
+        </Link>
+        <Link
           href="/pitches"
           className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-semibold text-white shadow-md hover:bg-emerald-500 transition-all"
         >

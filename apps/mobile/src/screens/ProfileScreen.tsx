@@ -1,58 +1,251 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ActivityIndicator,
   RefreshControl,
   ScrollView,
   StyleSheet,
-  TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import type { AuthUser, SkillLevel, UpdateProfileInput } from "@footconnect/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  updateProfileSchema,
+  type AuthUser,
+  type PlayerPosition,
+  type SkillLevel,
+  type UpdateProfileInput,
+} from "@footconnect/shared";
 import { colors, spacing } from "@footconnect/ui";
+import { ProfileChoiceField } from "../components/profile/ProfileChoiceField";
+import { ProfileLocationFields } from "../components/profile/ProfileLocationFields";
+import { Badge, Button, Card, EloStat, Input, PlayerCard, Text } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth-context";
-import { Badge, Button, Card, EloStat, Input, PlayerCard, Text } from "../components/ui";
 
-const POSITION_PRESETS = ["ST", "LW", "RW", "CAM", "CM", "CDM", "CB", "LB", "RB", "GK"];
-const SKILL_LEVELS: { label: string; value: SkillLevel }[] = [
+const POSITION_CHOICES = [
+  { label: "Not set", value: null },
+  { label: "GK", value: "GK" },
+  { label: "DEF", value: "DEF" },
+  { label: "MID", value: "MID" },
+  { label: "FWD", value: "FWD" },
+  { label: "FLEX", value: "FLEX" },
+] as const satisfies ReadonlyArray<{ label: string; value: PlayerPosition | null }>;
+
+const SKILL_CHOICES = [
+  { label: "Not set", value: null },
   { label: "Beginner", value: "BEGINNER" },
   { label: "Intermediate", value: "INTERMEDIATE" },
   { label: "Advanced", value: "ADVANCED" },
   { label: "Pro", value: "PRO" },
-];
+] as const satisfies ReadonlyArray<{ label: string; value: SkillLevel | null }>;
 
-export function ProfileScreen() {
-  const { user, logout, setUser } = useAuth();
-  const {
-    data,
-    isLoading,
-    refetch,
-    isRefetching,
-  } = useQuery<AuthUser>({
-    queryKey: ["me"],
-    queryFn: () => api.get<AuthUser>("/api/v1/users/me"),
-    initialData: user ?? undefined,
+type ProfileField = keyof UpdateProfileInput;
+type FieldErrors = Partial<Record<ProfileField, string>>;
+
+function numberField(value: string): number | undefined {
+  return value.trim() === "" ? undefined : Number(value);
+}
+
+function validateProfile(input: {
+  displayName: string;
+  position: PlayerPosition | null;
+  skillLevel: SkillLevel | null;
+  bio: string;
+  avatarUrl: string;
+  latitude: string;
+  longitude: string;
+}): { data?: UpdateProfileInput; errors: FieldErrors } {
+  const latitude = numberField(input.latitude);
+  const longitude = numberField(input.longitude);
+  const coordinates =
+    latitude === undefined && longitude === undefined
+      ? { lat: null, lng: null }
+      : {
+          ...(latitude === undefined ? {} : { lat: latitude }),
+          ...(longitude === undefined ? {} : { lng: longitude }),
+        };
+  const result = updateProfileSchema.safeParse({
+    displayName: input.displayName,
+    position: input.position,
+    skillLevel: input.skillLevel,
+    bio: input.bio.trim() === "" ? null : input.bio,
+    avatarUrl: input.avatarUrl.trim() === "" ? null : input.avatarUrl.trim(),
+    ...coordinates,
   });
 
-  const [displayName, setDisplayName] = useState("");
-  const [position, setPosition] = useState("ST");
-  const [skillLevel, setSkillLevel] = useState<SkillLevel | null>(null);
-  const [bio, setBio] = useState("");
+  if (result.success) return { data: result.data, errors: {} };
 
-  useEffect(() => {
-    if (data) {
-      setDisplayName(data.displayName);
-      setPosition(data.position ?? "ST");
-      setSkillLevel(data.skillLevel ?? null);
-      setBio(data.bio ?? "");
+  const errors: FieldErrors = {};
+  for (const issue of result.error.issues) {
+    const field = issue.path[0];
+    if (typeof field === "string" && !(field in errors)) {
+      errors[field as ProfileField] = issue.message;
     }
-  }, [data]);
+  }
+  return { errors };
+}
+
+function ProfileEditor({
+  profile,
+  refreshing,
+  onRefresh,
+}: {
+  profile: AuthUser;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const { logout, setUser } = useAuth();
+  const queryClient = useQueryClient();
+  const [displayName, setDisplayName] = useState(profile.displayName);
+  const [position, setPosition] = useState<PlayerPosition | null>(profile.position);
+  const [skillLevel, setSkillLevel] = useState<SkillLevel | null>(profile.skillLevel);
+  const [bio, setBio] = useState(profile.bio ?? "");
+  const [avatarUrl, setAvatarUrl] = useState(profile.avatarUrl ?? "");
+  const [latitude, setLatitude] = useState(profile.lat?.toString() ?? "");
+  const [longitude, setLongitude] = useState(profile.lng?.toString() ?? "");
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   const mutation = useMutation({
-    mutationFn: (input: UpdateProfileInput) => api.patch<AuthUser>("/api/v1/users/me", input),
-    onSuccess: (updated) => setUser(updated),
+    mutationFn: (input: UpdateProfileInput) => api.updateMyProfile(input),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["me"], updated);
+      setUser(updated);
+      setDisplayName(updated.displayName);
+      setPosition(updated.position);
+      setSkillLevel(updated.skillLevel);
+      setBio(updated.bio ?? "");
+      setAvatarUrl(updated.avatarUrl ?? "");
+      setLatitude(updated.lat?.toString() ?? "");
+      setLongitude(updated.lng?.toString() ?? "");
+    },
+  });
+
+  function saveProfile() {
+    const result = validateProfile({
+      displayName,
+      position,
+      skillLevel,
+      bio,
+      avatarUrl,
+      latitude,
+      longitude,
+    });
+    setFieldErrors(result.errors);
+    if (result.data) mutation.mutate(result.data);
+  }
+
+  return (
+    <ScrollView
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor={colors.brand}
+        />
+      }
+    >
+      <View style={styles.cardWrap}>
+        <PlayerCard
+          name={displayName || profile.displayName}
+          ovr={78}
+          position={position ?? "FLEX"}
+          tier="gold"
+          avatarUri={avatarUrl || null}
+          width={180}
+        />
+      </View>
+
+      <Card style={styles.statRow}>
+        <EloStat elo={1000} delta={0} />
+        <View style={styles.divider} />
+        <View>
+          <Text variant="overline">Tier</Text>
+          <Text variant="stat">Gold Division</Text>
+        </View>
+        <View style={styles.divider} />
+        <Badge label="Active" tone="brand" />
+      </Card>
+      <Text variant="caption" style={styles.centerText} color={colors.textMuted}>
+        Elo and divisions update after match-result verification.
+      </Text>
+
+      <Text variant="overline" style={styles.sectionHeading}>
+        Player profile
+      </Text>
+      <Input
+        label="Display name"
+        value={displayName}
+        error={fieldErrors.displayName}
+        onChangeText={setDisplayName}
+      />
+      <ProfileChoiceField
+        label="Preferred position"
+        value={position}
+        choices={POSITION_CHOICES}
+        error={fieldErrors.position}
+        onChange={setPosition}
+      />
+      <ProfileChoiceField
+        label="Self-assessed skill level"
+        value={skillLevel}
+        choices={SKILL_CHOICES}
+        error={fieldErrors.skillLevel}
+        onChange={setSkillLevel}
+      />
+      <Input
+        label="Player bio"
+        placeholder="Playstyle, preferred foot, local pitch..."
+        value={bio}
+        error={fieldErrors.bio}
+        onChangeText={setBio}
+        multiline
+        style={styles.bio}
+      />
+      <Input
+        label="Avatar HTTPS URL"
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        value={avatarUrl}
+        error={fieldErrors.avatarUrl}
+        onChangeText={setAvatarUrl}
+      />
+      <ProfileLocationFields
+        latitude={latitude}
+        longitude={longitude}
+        latitudeError={fieldErrors.lat}
+        longitudeError={fieldErrors.lng}
+        onLatitudeChange={setLatitude}
+        onLongitudeChange={setLongitude}
+      />
+
+      {mutation.isError ? (
+        <Text color={colors.danger}>
+          Could not save your profile. Your changes are still here; retry when ready.
+        </Text>
+      ) : null}
+      {mutation.isSuccess ? (
+        <Text color={colors.success}>Profile updated successfully.</Text>
+      ) : null}
+
+      <Button label="Save profile" loading={mutation.isPending} onPress={saveProfile} />
+      <Button label="Sign out" variant="ghost" onPress={() => void logout()} />
+      <Text variant="caption" style={styles.centerText} color={colors.textMuted}>
+        {profile.email}
+      </Text>
+    </ScrollView>
+  );
+}
+
+export function ProfileScreen() {
+  const { user } = useAuth();
+  const { data, isLoading, refetch, isRefetching } = useQuery({
+    queryKey: ["me"],
+    queryFn: () => api.getMyProfile(),
+    initialData: user ?? undefined,
   });
 
   if (isLoading || !data) {
@@ -65,130 +258,12 @@ export function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={() => void refetch()}
-            tintColor={colors.brand}
-          />
-        }
-      >
-        <View style={styles.cardWrap}>
-          <PlayerCard
-            name={displayName || data.displayName}
-            ovr={78}
-            position={(position || "ST").slice(0, 3).toUpperCase()}
-            tier="gold"
-            avatarUri={data.avatarUrl}
-            width={180}
-          />
-        </View>
-
-        <Card style={styles.statRow}>
-          <EloStat elo={1000} delta={0} />
-          <View style={styles.divider} />
-          <View>
-            <Text variant="overline">Tier</Text>
-            <Text variant="stat">Gold Division</Text>
-          </View>
-          <View style={styles.divider} />
-          <Badge label="Active" tone="brand" />
-        </Card>
-        <Text variant="caption" style={{ textAlign: "center" }} color={colors.textMuted}>
-          Real ELO & divisions update automatically after match results verification.
-        </Text>
-
-        <Text variant="overline" style={{ marginTop: spacing.sm }}>
-          Player Specs
-        </Text>
-        <Input label="Display name" value={displayName} onChangeText={setDisplayName} />
-
-        {/* Position Selection Chips */}
-        <View style={styles.chipSection}>
-          <Text variant="caption" color={colors.textSecondary} style={{ marginBottom: spacing.xs }}>
-            Preferred Position
-          </Text>
-          <View style={styles.chipGrid}>
-            {POSITION_PRESETS.map((pos) => {
-              const isSelected = position.toUpperCase() === pos;
-              return (
-                <TouchableOpacity
-                  key={pos}
-                  onPress={() => setPosition(pos)}
-                  style={[styles.chip, isSelected && styles.chipActive]}
-                >
-                  <Text
-                    variant="titleS"
-                    color={isSelected ? colors.brand : colors.textMuted}
-                    style={{ fontSize: 12 }}
-                  >
-                    {pos}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Skill Level Selector */}
-        <View style={styles.chipSection}>
-          <Text variant="caption" color={colors.textSecondary} style={{ marginBottom: spacing.xs }}>
-            Self-Assessed Skill Level
-          </Text>
-          <View style={styles.skillGrid}>
-            {SKILL_LEVELS.map((lvl) => {
-              const isSelected = skillLevel === lvl.value;
-              return (
-                <TouchableOpacity
-                  key={lvl.value}
-                  onPress={() => setSkillLevel(lvl.value)}
-                  style={[styles.skillChip, isSelected && styles.skillChipActive]}
-                >
-                  <Text
-                    variant="titleS"
-                    color={isSelected ? colors.brand : colors.textMuted}
-                    style={{ fontSize: 12 }}
-                  >
-                    {lvl.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
-        <Input
-          label="Player Bio"
-          placeholder="Playstyle, preferred foot, local pitch..."
-          value={bio}
-          onChangeText={setBio}
-          multiline
-          style={styles.bio}
-        />
-
-        {mutation.isError ? <Text color={colors.danger}>Could not save profile changes.</Text> : null}
-        {mutation.isSuccess ? <Text color={colors.success}>Profile updated successfully! ✨</Text> : null}
-
-        <Button
-          label="Save Profile"
-          loading={mutation.isPending}
-          onPress={() =>
-            mutation.mutate({
-              displayName,
-              position: position || null,
-              skillLevel: skillLevel || undefined,
-              bio: bio || null,
-            })
-          }
-        />
-        <Button label="Sign Out" variant="ghost" onPress={() => void logout()} />
-        <Text variant="caption" style={{ textAlign: "center" }} color={colors.textMuted}>
-          {data.email}
-        </Text>
-      </ScrollView>
+      <ProfileEditor
+        key={data.id}
+        profile={data}
+        refreshing={isRefetching}
+        onRefresh={() => void refetch()}
+      />
     </SafeAreaView>
   );
 }
@@ -200,33 +275,7 @@ const styles = StyleSheet.create({
   cardWrap: { alignItems: "center", marginBottom: spacing.xs },
   statRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   divider: { width: 1, alignSelf: "stretch", backgroundColor: colors.borderSubtle },
-  bio: { height: 80, paddingTop: spacing.sm, textAlignVertical: "top" },
-  chipSection: { marginVertical: spacing.xs },
-  chipGrid: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: colors.surface1,
-    borderWidth: 1,
-    borderColor: colors.borderSubtle,
-  },
-  chipActive: {
-    borderColor: colors.brand,
-    backgroundColor: colors.surface2,
-  },
-  skillGrid: { flexDirection: "row", gap: 8 },
-  skillChip: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: colors.surface1,
-    borderWidth: 1,
-    borderColor: colors.borderSubtle,
-  },
-  skillChipActive: {
-    borderColor: colors.brand,
-    backgroundColor: colors.surface2,
-  },
+  bio: { height: 96, paddingTop: spacing.sm, textAlignVertical: "top" },
+  centerText: { textAlign: "center" },
+  sectionHeading: { marginTop: spacing.sm },
 });
