@@ -3,6 +3,16 @@ import { ZodError } from "zod";
 import type { ApiErrorCode, ApiErrorResponse } from "@footconnect/shared";
 import { logger } from "../lib/logger";
 
+function isZodValidationError(
+  error: unknown,
+): error is ZodError | { name: "ZodError"; issues: ZodError["issues"] } {
+  if (error instanceof ZodError) return true;
+  if (typeof error !== "object" || error === null) return false;
+
+  const candidate = error as { name?: unknown; issues?: unknown };
+  return candidate.name === "ZodError" && Array.isArray(candidate.issues);
+}
+
 const defaultErrorCodeByStatus: Readonly<Record<number, ApiErrorCode>> = {
   400: "VALIDATION_ERROR",
   401: "UNAUTHENTICATED",
@@ -71,7 +81,7 @@ export function errorHandler(
   res: Response,
   _next: NextFunction,
 ): void {
-  if (err instanceof ZodError) {
+  if (isZodValidationError(err)) {
     res.status(400).json(
       errorResponse(req, res, {
         code: "VALIDATION_ERROR",

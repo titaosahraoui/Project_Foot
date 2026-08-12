@@ -1,5 +1,6 @@
 import type {
   AuthResponse,
+  AuthUser,
   CreatePitchInput,
   CreatePitchSlotInput,
   CreateTeamInput,
@@ -13,6 +14,7 @@ import type {
   RegisterInput,
   TeamDetail,
   UpdatePitchInput,
+  UpdateProfileInput,
   UpdateTeamInput,
 } from "@footconnect/shared";
 
@@ -51,6 +53,9 @@ export interface ApiClient {
   /** Pass a refresh token (mobile); omit to rely on the httpOnly cookie (web). */
   refresh(refreshToken?: string): Promise<AuthResponse>;
   logout(refreshToken?: string): Promise<void>;
+  // Profile
+  getMyProfile(): Promise<AuthUser>;
+  updateMyProfile(input: UpdateProfileInput): Promise<AuthUser>;
   // Teams
   createTeam(input: CreateTeamInput): Promise<TeamDetail>;
   getMyTeams(): Promise<TeamDetail[]>;
@@ -122,6 +127,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     logout: async (refreshToken) => {
       await post<void>("/api/v1/auth/logout", refreshToken ? { refreshToken } : {});
     },
+    getMyProfile: () => request<AuthUser>("/api/v1/users/me"),
+    updateMyProfile: (input) =>
+      request<AuthUser>("/api/v1/users/me", {
+        method: "PATCH",
+        body: json(input),
+      }),
     createTeam: (input) => post<TeamDetail>("/api/v1/teams", input),
     getMyTeams: () => request<TeamDetail[]>("/api/v1/teams/mine"),
     getTeam: (teamId) => request<TeamDetail>(`/api/v1/teams/${teamId}`),
