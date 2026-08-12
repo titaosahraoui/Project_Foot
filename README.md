@@ -52,6 +52,9 @@ pnpm docker:up
 # Apply database migrations
 pnpm --filter @footconnect/api prisma:migrate
 
+# Create the three reusable local test accounts
+pnpm --filter @footconnect/api prisma:seed
+
 # Start all applications
 pnpm dev
 ```
@@ -65,6 +68,15 @@ pnpm --filter @footconnect/mobile start
 ```
 
 API health check: `GET http://localhost:4000/health`
+
+The development seed is safe to rerun and creates these accounts with password
+`password123`: `player@footconnect.local`, `owner@footconnect.local`, and
+`admin@footconnect.local`. It only runs when `NODE_ENV=development`.
+
+When Expo runs on a physical phone, set `EXPO_PUBLIC_API_URL` in `.env` to the
+computer's LAN address (for example `http://192.168.1.20:4000`), ensure both
+devices are on the same network, and restart Expo. `localhost` on a phone points
+to the phone itself. Android Emulator can use `http://10.0.2.2:4000`.
 
 ## Verification
 

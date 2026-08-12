@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { AuthUser, LoginInput } from "@footconnect/shared";
+import type { AuthUser, LoginInput, RegisterInput } from "@footconnect/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, setAccessToken } from "./api";
 
@@ -16,6 +16,7 @@ interface AuthState {
   user: AuthUser | null;
   loading: boolean;
   login: (input: LoginInput) => Promise<void>;
+  register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
   setUser: (user: AuthUser) => void;
 }
@@ -49,6 +50,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
   }, []);
 
+  const register = useCallback(async (input: RegisterInput) => {
+    const res = await api.register(input);
+    setAccessToken(res.accessToken);
+    setUser(res.user);
+  }, []);
+
   const logout = useCallback(async () => {
     await api.logout();
     setAccessToken(null);
@@ -57,7 +64,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, setUser }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, register, logout, setUser }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -7,9 +7,10 @@ export function setAccessToken(token: string | null): void {
   accessToken = token;
 }
 
-const baseUrl = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
+export const apiBaseUrl =
+  process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export const api = createApiClient({
-  baseUrl,
+  baseUrl: apiBaseUrl,
   getToken: () => accessToken,
 });

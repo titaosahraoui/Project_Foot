@@ -8,8 +8,17 @@ export function findById(id: string) {
   return prisma.user.findUnique({ where: { id } });
 }
 
-export function createUser(input: { email: string; passwordHash: string; displayName: string }) {
-  return prisma.user.create({ data: input });
+export function createUserWithRefreshSession(input: {
+  user: { email: string; passwordHash: string; displayName: string };
+  session: { jti: string; expiresAt: Date };
+}) {
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({ data: input.user });
+    await tx.refreshSession.create({
+      data: { ...input.session, userId: user.id },
+    });
+    return user;
+  });
 }
 
 export function createRefreshSession(input: {

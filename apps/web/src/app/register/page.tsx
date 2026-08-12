@@ -3,33 +3,38 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { loginSchema } from "@footconnect/shared";
+import {
+  getRegistrationErrorMessage,
+  registerSchema,
+} from "@footconnect/shared";
+import { apiBaseUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
-export default function LoginPage() {
+export default function RegisterPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { register } = useAuth();
+  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
     setError(null);
 
-    const parsed = loginSchema.safeParse({ email, password });
+    const parsed = registerSchema.safeParse({ displayName, email, password });
     if (!parsed.success) {
-      setError("Enter a valid email and password.");
+      setError("Check your name, email, and a password of 8+ characters.");
       return;
     }
 
     setSubmitting(true);
     try {
-      await login(parsed.data);
+      await register(parsed.data);
       router.push("/");
-    } catch {
-      setError("Invalid credentials.");
+    } catch (registrationError) {
+      setError(getRegistrationErrorMessage(registrationError, apiBaseUrl));
     } finally {
       setSubmitting(false);
     }
@@ -41,19 +46,32 @@ export default function LoginPage() {
         onSubmit={onSubmit}
         className="flex w-full max-w-sm flex-col gap-4 rounded-lg border border-gray-200 p-6 dark:border-gray-800"
       >
-        <h1 className="text-2xl font-bold">Sign in</h1>
+        <h1 className="text-2xl font-bold">Create account</h1>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Start your FootConnect profile.
+        </p>
+        <input
+          type="text"
+          autoComplete="name"
+          placeholder="Display name"
+          value={displayName}
+          onChange={(event) => setDisplayName(event.target.value)}
+          className="rounded border border-gray-300 px-3 py-2 dark:border-gray-700 dark:bg-transparent"
+        />
         <input
           type="email"
+          autoComplete="email"
           placeholder="Email"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(event) => setEmail(event.target.value)}
           className="rounded border border-gray-300 px-3 py-2 dark:border-gray-700 dark:bg-transparent"
         />
         <input
           type="password"
-          placeholder="Password"
+          autoComplete="new-password"
+          placeholder="Password (8+ characters)"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(event) => setPassword(event.target.value)}
           className="rounded border border-gray-300 px-3 py-2 dark:border-gray-700 dark:bg-transparent"
         />
         {error && <p className="text-sm text-red-500">{error}</p>}
@@ -62,15 +80,15 @@ export default function LoginPage() {
           disabled={submitting}
           className="rounded bg-green-600 px-4 py-2 font-medium text-white disabled:opacity-50"
         >
-          {submitting ? "Signing in…" : "Sign in"}
+          {submitting ? "Creating account…" : "Create account"}
         </button>
         <p className="text-center text-sm text-gray-600 dark:text-gray-400">
-          New to FootConnect?{" "}
+          Already registered?{" "}
           <Link
-            href="/register"
+            href="/login"
             className="font-medium text-green-600 hover:underline"
           >
-            Create an account
+            Sign in
           </Link>
         </p>
       </form>

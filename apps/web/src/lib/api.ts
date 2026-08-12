@@ -8,10 +8,11 @@ export function setAccessToken(token: string | null): void {
   accessToken = token;
 }
 
-const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+export const apiBaseUrl =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export const api = createApiClient({
-  baseUrl,
+  baseUrl: apiBaseUrl,
   withCredentials: true,
   getToken: () => accessToken,
 });
