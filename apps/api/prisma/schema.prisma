@@ -159,3 +159,21 @@ model Invitation {
   @@unique([teamId, inviteeId])
   @@map("invitations")
 }
+
+model IdempotencyRecord {
+  id             String   @id @default(uuid())
+  actorId        String
+  scope          String
+  key            String
+  requestHash    String
+  resourceType   String
+  resourceId     String
+  responseStatus Int
+  responseBody   Json
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+
+  @@unique([actorId, scope, key])
+  @@index([expiresAt])
+  @@map("idempotency_records")
+}
