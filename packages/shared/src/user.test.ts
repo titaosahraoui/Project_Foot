@@ -66,7 +66,22 @@ describe("updateProfileSchema", () => {
     expect(updateProfileSchema.safeParse({ lat: 91, lng: 3.05 }).success).toBe(
       false,
     );
+    expect(updateProfileSchema.safeParse({ lat: -91, lng: 3.05 }).success).toBe(
+      false,
+    );
     expect(updateProfileSchema.safeParse({ lat: 36.75, lng: 181 }).success).toBe(
+      false,
+    );
+    expect(updateProfileSchema.safeParse({ lat: 36.75, lng: -181 }).success).toBe(
+      false,
+    );
+  });
+
+  it("enforces bio maximum length of 500 characters", () => {
+    expect(updateProfileSchema.safeParse({ bio: "a".repeat(500) }).success).toBe(
+      true,
+    );
+    expect(updateProfileSchema.safeParse({ bio: "a".repeat(501) }).success).toBe(
       false,
     );
   });
@@ -115,6 +130,9 @@ describe("canonical auth profile contracts", () => {
     ).toBe(false);
     expect(
       authUserSchema.safeParse({ ...authUser, lat: 36.75, lng: null }).success,
+    ).toBe(false);
+    expect(
+      authUserSchema.safeParse({ ...authUser, lat: null, lng: 3.05 }).success,
     ).toBe(false);
   });
 });
