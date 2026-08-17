@@ -1,5 +1,12 @@
 import type { Request, Response } from "express";
-import { createTeamSchema, inviteSchema, updateTeamSchema } from "@footconnect/shared";
+import {
+  createTeamSchema,
+  formatCodeSchema,
+  inviteSchema,
+  setTeamLineupSchema,
+  transferCaptainSchema,
+  updateTeamSchema,
+} from "@footconnect/shared";
 import * as service from "./teams.service";
 
 export async function createTeamHandler(req: Request, res: Response): Promise<void> {
@@ -18,6 +25,29 @@ export async function getTeamHandler(req: Request, res: Response): Promise<void>
 export async function updateTeamHandler(req: Request, res: Response): Promise<void> {
   const input = updateTeamSchema.parse(req.body);
   res.json(await service.updateTeam(req.params.id!, req.userId!, input));
+}
+
+export async function transferCaptainHandler(req: Request, res: Response): Promise<void> {
+  const input = transferCaptainSchema.parse(req.body);
+  res.json(await service.transferCaptain(req.params.id!, req.userId!, input));
+}
+
+export async function archiveTeamHandler(req: Request, res: Response): Promise<void> {
+  res.json(await service.archiveTeam(req.params.id!, req.userId!));
+}
+
+export async function reactivateTeamHandler(req: Request, res: Response): Promise<void> {
+  res.json(await service.reactivateTeam(req.params.id!, req.userId!));
+}
+
+export async function getLineupsHandler(req: Request, res: Response): Promise<void> {
+  res.json(await service.getLineups(req.params.id!));
+}
+
+export async function setLineupHandler(req: Request, res: Response): Promise<void> {
+  const format = formatCodeSchema.parse(req.params.format);
+  const input = setTeamLineupSchema.parse(req.body);
+  res.json(await service.setLineup(req.params.id!, req.userId!, format, input));
 }
 
 export async function inviteHandler(req: Request, res: Response): Promise<void> {

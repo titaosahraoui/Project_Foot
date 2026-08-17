@@ -136,22 +136,68 @@ enum InvitationStatus {
   DECLINED
 }
 
+enum TeamStatus {
+  ACTIVE
+  ARCHIVED
+}
+
 model Team {
   id          String           @id @default(uuid())
   name        String
   logoUrl     String?
   lat         Float?
   lng         Float?
-  skillRating Int              @default(1000)
-  wins        Int              @default(0)
-  losses      Int              @default(0)
+  status      TeamStatus       @default(ACTIVE)
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
+  rating      TeamRating?
   members     TeamMembership[]
   invitations Invitation[]
+  lineups     TeamLineup[]
 
   @@map("teams")
+}
+
+model TeamRating {
+  teamId        String   @id
+  team          Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  rating        Int      @default(1000)
+  matchesPlayed Int      @default(0)
+  wins          Int      @default(0)
+  draws         Int      @default(0)
+  losses        Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("team_ratings")
+}
+
+model TeamLineup {
+  id            String           @id @default(uuid())
+  teamId        String
+  team          Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  format        String
+  formationCode String
+  updatedById   String
+  updatedAt     DateTime         @updatedAt
+  slots         TeamLineupSlot[]
+
+  @@unique([teamId, format])
+  @@map("team_lineups")
+}
+
+model TeamLineupSlot {
+  id           String     @id @default(uuid())
+  lineupId     String
+  lineup       TeamLineup @relation(fields: [lineupId], references: [id], onDelete: Cascade)
+  userId       String
+  positionCode String
+  sortOrder    Int
+
+  @@unique([lineupId, sortOrder])
+  @@unique([lineupId, userId])
+  @@map("team_lineup_slots")
 }
 
 model TeamMembership {

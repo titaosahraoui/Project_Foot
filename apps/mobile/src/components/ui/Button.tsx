@@ -1,15 +1,16 @@
-import { ActivityIndicator, Pressable, StyleSheet, View, type ViewStyle } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, type ViewStyle } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { colors, gradients, radii, spacing } from "@footconnect/ui";
+import { colors, gradients, radii, shadows, spacing } from "@footconnect/ui";
 import { Text } from "./Text";
+import { fontFamily } from "../../theme/fonts";
 
-type Variant = "primary" | "secondary" | "ghost" | "danger";
+type Variant = "primary" | "secondary" | "ghost" | "danger" | "elite";
 type Size = "sm" | "md" | "lg";
 
 const SIZE: Record<Size, { height: number; px: number; fontSize: number }> = {
-  sm: { height: 40, px: spacing.md, fontSize: 14 },
-  md: { height: 50, px: spacing.lg, fontSize: 15 },
-  lg: { height: 56, px: spacing.lg, fontSize: 16 },
+  sm: { height: 38, px: spacing.sm, fontSize: 13 },
+  md: { height: 48, px: spacing.md, fontSize: 16 },
+  lg: { height: 56, px: spacing.lg, fontSize: 18 },
 };
 
 export interface ButtonProps {
@@ -20,7 +21,9 @@ export interface ButtonProps {
   loading?: boolean;
   disabled?: boolean;
   fullWidth?: boolean;
+  glow?: boolean;
   style?: ViewStyle;
+  icon?: React.ReactNode;
 }
 
 export function Button({
@@ -31,48 +34,70 @@ export function Button({
   loading = false,
   disabled = false,
   fullWidth = true,
+  glow = false,
   style,
+  icon,
 }: ButtonProps) {
   const s = SIZE[size];
   const isDisabled = disabled || loading;
 
   const labelColor =
-    variant === "primary" ? colors.textOnGreen : variant === "danger" ? colors.loss : colors.textPrimary;
+    variant === "primary"
+      ? colors.onPrimary
+      : variant === "danger"
+        ? colors.loss
+        : variant === "secondary"
+          ? colors.textPrimary
+          : colors.primary;
 
   const inner = loading ? (
     <ActivityIndicator color={labelColor} />
   ) : (
-    <Text
-      style={{
-        fontFamily: "Archivo_700Bold",
-        fontSize: s.fontSize,
-        color: labelColor,
-        letterSpacing: 0.2,
-      }}
-    >
-      {label}
-    </Text>
+    <>
+      {icon}
+      <Text
+        style={{
+          fontFamily: fontFamily.headline,
+          fontSize: s.fontSize,
+          color: labelColor,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </Text>
+    </>
   );
 
   const base: ViewStyle = {
     height: s.height,
     paddingHorizontal: s.px,
-    borderRadius: radii.pill,
+    borderRadius: radii.xl,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
+    gap: 8,
     opacity: isDisabled ? 0.5 : 1,
     alignSelf: fullWidth ? "stretch" : "flex-start",
   };
 
   if (variant === "primary") {
     return (
-      <Pressable onPress={onPress} disabled={isDisabled} style={({ pressed }) => [{ transform: [{ scale: pressed ? 0.98 : 1 }] }, fullWidth && { alignSelf: "stretch" }, style]}>
+      <Pressable
+        onPress={onPress}
+        disabled={isDisabled}
+        style={({ pressed }) => [
+          { transform: [{ scale: pressed ? 0.97 : 1 }] },
+          fullWidth && { alignSelf: "stretch" },
+          glow && shadows.glowNeon,
+          style,
+        ]}
+      >
         <LinearGradient
           colors={gradients.brand as unknown as readonly [string, string]}
           start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={base}
+          end={{ x: 1, y: 0 }}
+          style={[base, { backgroundColor: colors.primaryContainer }]}
         >
           {inner}
         </LinearGradient>
@@ -82,7 +107,7 @@ export function Button({
 
   const variantStyle: ViewStyle =
     variant === "secondary"
-      ? { backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.borderDefault }
+      ? { backgroundColor: colors.surfaceContainerHigh, borderWidth: 1, borderColor: colors.borderDefault }
       : variant === "danger"
         ? { backgroundColor: colors.lossBg, borderWidth: 1, borderColor: colors.loss }
         : { backgroundColor: "transparent" };
@@ -91,7 +116,7 @@ export function Button({
     <Pressable
       onPress={onPress}
       disabled={isDisabled}
-      style={({ pressed }) => [base, variantStyle, { transform: [{ scale: pressed ? 0.98 : 1 }] }, style]}
+      style={({ pressed }) => [base, variantStyle, { transform: [{ scale: pressed ? 0.97 : 1 }] }, style]}
     >
       {inner}
     </Pressable>

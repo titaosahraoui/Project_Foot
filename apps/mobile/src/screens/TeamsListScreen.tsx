@@ -37,10 +37,16 @@ export function TeamsListScreen({ navigation }: Props) {
                 <View style={{ flex: 1 }}>
                   <Text variant="titleS">{t.name}</Text>
                   <Text variant="caption">
-                    {t.memberCount} {t.memberCount === 1 ? "player" : "players"} · {t.skillRating} ELO
+                    {t.memberCount} {t.memberCount === 1 ? "player" : "players"} · {t.competitive?.rating ?? t.skillRating ?? 1000} ELO
                   </Text>
                 </View>
-                <Badge label={`${t.wins}W ${t.losses}L`} />
+                <Badge
+                  label={
+                    t.competitive
+                      ? `${t.competitive.wins}W ${t.competitive.draws}D ${t.competitive.losses}L`
+                      : `${t.wins ?? 0}W ${t.losses ?? 0}L`
+                  }
+                />
                 <Icon name="chevron-right" color={colors.textMuted} />
               </Card>
             </Pressable>

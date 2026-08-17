@@ -4,6 +4,7 @@ import type {
   CreatePitchInput,
   CreatePitchSlotInput,
   CreateTeamInput,
+  FormatCode,
   HealthStatus,
   Invitation,
   LoginInput,
@@ -12,7 +13,10 @@ import type {
   PitchQuery,
   PitchSlot,
   RegisterInput,
+  SetTeamLineupInput,
   TeamDetail,
+  TeamLineup,
+  TransferCaptainInput,
   UpdatePitchInput,
   UpdateProfileInput,
   UpdateTeamInput,
@@ -61,6 +65,11 @@ export interface ApiClient {
   getMyTeams(): Promise<TeamDetail[]>;
   getTeam(teamId: string): Promise<TeamDetail>;
   updateTeam(teamId: string, input: UpdateTeamInput): Promise<TeamDetail>;
+  transferTeamCaptain(teamId: string, input: TransferCaptainInput): Promise<TeamDetail>;
+  archiveTeam(teamId: string): Promise<TeamDetail>;
+  reactivateTeam(teamId: string): Promise<TeamDetail>;
+  getTeamLineups(teamId: string): Promise<TeamLineup[]>;
+  setTeamLineup(teamId: string, format: FormatCode, input: SetTeamLineupInput): Promise<TeamLineup>;
   inviteToTeam(teamId: string, email: string): Promise<void>;
   getInvitations(): Promise<Invitation[]>;
   acceptInvitation(invitationId: string): Promise<TeamDetail>;
@@ -139,6 +148,16 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     updateTeam: (teamId, input) =>
       request<TeamDetail>(`/api/v1/teams/${teamId}`, {
         method: "PATCH",
+        body: json(input),
+      }),
+    transferTeamCaptain: (teamId, input) =>
+      post<TeamDetail>(`/api/v1/teams/${teamId}/captain-transfer`, input),
+    archiveTeam: (teamId) => post<TeamDetail>(`/api/v1/teams/${teamId}/archive`),
+    reactivateTeam: (teamId) => post<TeamDetail>(`/api/v1/teams/${teamId}/reactivate`),
+    getTeamLineups: (teamId) => request<TeamLineup[]>(`/api/v1/teams/${teamId}/lineups`),
+    setTeamLineup: (teamId, format, input) =>
+      request<TeamLineup>(`/api/v1/teams/${teamId}/lineups/${format}`, {
+        method: "PUT",
         body: json(input),
       }),
     inviteToTeam: async (teamId, email) => {

@@ -11,5 +11,7 @@ export { Logo } from "./Logo";
 export { TierBadge } from "./TierBadge";
 export { EloStat } from "./EloStat";
 export { PlayerCard } from "./PlayerCard";
+export type { PlayerCardProps } from "./PlayerCard";
 export { MatchRow } from "./MatchRow";
 export type { MatchResult } from "./MatchRow";
+export { TrustSignalRing } from "./TrustSignalRing";
