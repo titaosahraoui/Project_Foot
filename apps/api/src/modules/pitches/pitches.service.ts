@@ -22,8 +22,12 @@ function toPitch(p: PitchWithSlots): Pitch {
     lat: p.lat,
     lng: p.lng,
     surface: p.surface,
+    format: p.size,
     size: p.size,
-    pricePerHour: p.pricePerHour,
+    hourlyRate: {
+      amountMinor: p.priceAmountMinor,
+      currency: "DZD",
+    },
     amenities: p.amenities,
     photos: p.photos,
     isActive: p.isActive,

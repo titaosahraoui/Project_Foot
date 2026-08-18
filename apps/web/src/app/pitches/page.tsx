@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import type { Pitch } from "@footconnect/shared";
+import { formatPitchPrice } from "@footconnect/shared";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
@@ -132,7 +133,7 @@ export default function PitchesPage() {
               <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between">
                 <div>
                   <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
-                    ${pitch.pricePerHour}
+                    {formatPitchPrice(pitch.hourlyRate)}
                   </span>
                   <span className="text-xs text-zinc-500 dark:text-zinc-400"> / hr</span>
                 </div>

@@ -4,6 +4,7 @@ import { use, useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { CreatePitchSlotInput, PitchDetail, PitchSlot } from "@footconnect/shared";
+import { formatPitchPrice } from "@footconnect/shared";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
@@ -106,7 +107,7 @@ export default function PitchDetailPage({ params }: { params: Promise<{ id: stri
             </span>
           </div>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
-            📍 {pitch.address}, {pitch.city} · ${pitch.pricePerHour}/hr · {pitch.size.replace("_", " ")} ({pitch.surface.replace("_", " ")})
+            📍 {pitch.address}, {pitch.city} · {formatPitchPrice(pitch.hourlyRate)}/hr · {pitch.format.replace("_", " ")} ({pitch.surface.replace("_", " ")})
           </p>
         </div>
 
@@ -229,7 +230,7 @@ export default function PitchDetailPage({ params }: { params: Promise<{ id: stri
               <div className="flex justify-between py-1.5 border-b border-zinc-100 dark:border-zinc-800">
                 <span className="text-zinc-500">Hourly Rate</span>
                 <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                  ${pitch.pricePerHour} / hour
+                  {formatPitchPrice(pitch.hourlyRate)} / hour
                 </span>
               </div>
 

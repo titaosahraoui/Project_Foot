@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import type { Pitch, PitchSlot } from "@footconnect/shared";
+import { formatPitchPrice } from "@footconnect/shared";
 import { colors, spacing, radii } from "@footconnect/ui";
 import {
   Badge,
@@ -282,14 +283,14 @@ export function PlayScreen() {
                       {p.name}
                     </Text>
                     <Text variant="titleS" color={colors.primaryContainer}>
-                      ${p.pricePerHour}/h
+                      {formatPitchPrice(p.hourlyRate)}/h
                     </Text>
                   </View>
                   <Text variant="labelSm" color={colors.onSurfaceVariant}>
                     📍 {p.address}, {p.city}
                   </Text>
                   <View style={styles.badgeRow}>
-                    <Badge label={p.size.replace("_", " ")} tone="brand" />
+                    <Badge label={p.format.replace("_", " ")} tone="brand" />
                     <Badge label={p.surface.replace("_", " ")} tone="neutral" />
                   </View>
                 </Card>
@@ -323,9 +324,12 @@ export function PlayScreen() {
                 <View style={{ gap: spacing.sm, marginVertical: spacing.sm }}>
                   <Text variant="overline">Facility Details</Text>
                   <View style={{ flexDirection: "row", gap: spacing.xs }}>
-                    <Badge label={selectedPitch?.size.replace("_", " ") ?? ""} tone="brand" />
+                    <Badge label={selectedPitch?.format.replace("_", " ") ?? ""} tone="brand" />
                     <Badge label={selectedPitch?.surface.replace("_", " ") ?? ""} tone="neutral" />
-                    <Badge label={`$${selectedPitch?.pricePerHour ?? 0}/hr`} tone="win" />
+                    <Badge
+                      label={`${selectedPitch ? formatPitchPrice(selectedPitch.hourlyRate) : "0 DZD"}/hr`}
+                      tone="win"
+                    />
                   </View>
 
                   <Text variant="overline" style={{ marginTop: spacing.sm }}>

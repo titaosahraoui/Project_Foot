@@ -84,23 +84,24 @@ enum PitchSize {
 }
 
 model Pitch {
-  id           String       @id @default(uuid())
-  ownerId      String
-  owner        User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  name         String
-  description  String?
-  address      String
-  city         String
-  lat          Float
-  lng          Float
-  surface      PitchSurface
-  size         PitchSize
-  pricePerHour Float
-  amenities    String[]     @default([])
-  photos       String[]     @default([])
-  isActive     Boolean      @default(true)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id               String       @id @default(uuid())
+  ownerId          String
+  owner            User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  address          String
+  city             String
+  lat              Float
+  lng              Float
+  surface          PitchSurface
+  size             PitchSize
+  priceAmountMinor Int
+  currency         String       @default("DZD")
+  amenities        String[]     @default([])
+  photos           String[]     @default([])
+  isActive         Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
   slots        PitchSlot[]
 

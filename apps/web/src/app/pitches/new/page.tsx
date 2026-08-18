@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/router";
 import Link from "next/link";
-import type { PitchSize, PitchSurface } from "@footconnect/shared";
+import type { MatchFormat, PitchSurface } from "@footconnect/shared";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
@@ -25,13 +24,17 @@ export default function NewPitchPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [address, setAddress] = useState("");
-  const [city, setCity] = useState("");
-  const [lat, setLat] = useState("41.3851");
-  const [lng, setLng] = useState("2.1734");
+  const [city, setCity] = useState("Algiers");
+  const [lat, setLat] = useState("36.7538");
+  const [lng, setLng] = useState("3.0588");
   const [surface, setSurface] = useState<PitchSurface>("ARTIFICIAL_TURF");
-  const [size, setSize] = useState<PitchSize>("SEVEN_A_SIDE");
-  const [pricePerHour, setPricePerHour] = useState("75");
-  const [selectedAmenities, setSelectedAmenities] = useState<string[]>(["SHOWERS", "LIGHTING", "PARKING"]);
+  const [format, setFormat] = useState<MatchFormat>("SEVEN_A_SIDE");
+  const [hourlyRateDzd, setHourlyRateDzd] = useState("4000");
+  const [selectedAmenities, setSelectedAmenities] = useState<string[]>([
+    "SHOWERS",
+    "LIGHTING",
+    "PARKING",
+  ]);
 
   const toggleAmenity = (amenity: string) => {
     setSelectedAmenities((prev) =>
@@ -45,6 +48,7 @@ export default function NewPitchPage() {
     setLoading(true);
 
     try {
+      const majorDzd = parseFloat(hourlyRateDzd) || 0;
       const pitch = await api.createPitch({
         name,
         description: description || undefined,
@@ -53,8 +57,11 @@ export default function NewPitchPage() {
         lat: parseFloat(lat),
         lng: parseFloat(lng),
         surface,
-        size,
-        pricePerHour: parseFloat(pricePerHour),
+        format,
+        hourlyRate: {
+          amountMinor: Math.round(majorDzd * 100),
+          currency: "DZD",
+        },
         amenities: selectedAmenities,
         photos: [],
       });
@@ -79,45 +86,41 @@ export default function NewPitchPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl p-6 md:p-8 space-y-8">
-      <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-4">
+    <div className="mx-auto max-w-2xl px-4 py-10">
+      <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-extrabold text-zinc-900 dark:text-zinc-100">
-            Register New Pitch Facility
-          </h1>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
-            Provide details about your football pitch to start receiving team reservations.
+          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">Create New Pitch</h1>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            Add a new football pitch to list it for players and team challenges.
           </p>
         </div>
         <Link
           href="/pitches"
-          className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 hover:underline"
+          className="text-sm font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
         >
-          ← Cancel
+          Cancel
         </Link>
       </div>
 
       {error && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-500">
+        <div className="mb-6 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-600 dark:text-red-400">
           {error}
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="space-y-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 p-6 shadow-sm">
-          <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Basic Info</h2>
-
+        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 p-6 space-y-4">
           <div>
             <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-              Facility / Pitch Name *
+              Pitch Name *
             </label>
             <input
               type="text"
               required
+              placeholder="e.g. Arena Hub (Dely Ibrahim)"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Camp Nou Turf Arena"
-              className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
           </div>
 
@@ -127,24 +130,24 @@ export default function NewPitchPage() {
             </label>
             <textarea
               rows={3}
+              placeholder="Tell players about the turf quality, floodlights, parking, etc."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe surface quality, changing rooms, rules..."
-              className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                Street Address *
+                Address *
               </label>
               <input
                 type="text"
                 required
+                placeholder="e.g. Route de Chéraga"
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
-                placeholder="e.g. 45 Sports Avenue"
                 className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
@@ -156,9 +159,9 @@ export default function NewPitchPage() {
               <input
                 type="text"
                 required
+                placeholder="e.g. Algiers"
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
-                placeholder="e.g. Barcelona"
                 className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
@@ -167,7 +170,7 @@ export default function NewPitchPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                Latitude
+                Latitude *
               </label>
               <input
                 type="number"
@@ -178,9 +181,10 @@ export default function NewPitchPage() {
                 className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
+
             <div>
               <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                Longitude
+                Longitude *
               </label>
               <input
                 type="number"
@@ -192,35 +196,31 @@ export default function NewPitchPage() {
               />
             </div>
           </div>
-        </div>
-
-        <div className="space-y-4 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 p-6 shadow-sm">
-          <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">Specifications</h2>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                Surface Type
+                Surface *
               </label>
               <select
                 value={surface}
                 onChange={(e) => setSurface(e.target.value as PitchSurface)}
                 className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                <option value="ARTIFICIAL_TURF">Artificial Turf 🌿</option>
-                <option value="NATURAL_GRASS">Natural Grass 🌱</option>
-                <option value="INDOOR_PARQUET">Indoor Parquet 🏟️</option>
-                <option value="CONCRETE">Concrete 🏀</option>
+                <option value="ARTIFICIAL_TURF">Artificial Turf</option>
+                <option value="NATURAL_GRASS">Natural Grass</option>
+                <option value="INDOOR_PARQUET">Indoor Parquet</option>
+                <option value="CONCRETE">Concrete</option>
               </select>
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                Match Size
+                Format *
               </label>
               <select
-                value={size}
-                onChange={(e) => setSize(e.target.value as PitchSize)}
+                value={format}
+                onChange={(e) => setFormat(e.target.value as MatchFormat)}
                 className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 <option value="FIVE_A_SIDE">5-a-side</option>
@@ -231,15 +231,16 @@ export default function NewPitchPage() {
 
             <div>
               <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                Price / Hour ($) *
+                Hourly Rate (DZD) *
               </label>
               <input
                 type="number"
                 min="0"
-                step="5"
+                step="100"
                 required
-                value={pricePerHour}
-                onChange={(e) => setPricePerHour(e.target.value)}
+                placeholder="4000"
+                value={hourlyRateDzd}
+                onChange={(e) => setHourlyRateDzd(e.target.value)}
                 className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
             </div>
@@ -272,21 +273,13 @@ export default function NewPitchPage() {
           </div>
         </div>
 
-        <div className="flex justify-end gap-4">
-          <Link
-            href="/pitches"
-            className="rounded-xl border border-zinc-300 dark:border-zinc-700 px-6 py-2.5 text-sm font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-          >
-            Cancel
-          </Link>
-          <button
-            type="submit"
-            disabled={loading}
-            className="rounded-xl bg-emerald-600 px-8 py-2.5 text-sm font-semibold text-white shadow-lg hover:bg-emerald-500 disabled:opacity-50 transition-all"
-          >
-            {loading ? "Creating Pitch..." : "Create Pitch"}
-          </button>
-        </div>
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white shadow-md hover:bg-emerald-500 transition-all disabled:opacity-50"
+        >
+          {loading ? "Creating pitch..." : "Create Pitch"}
+        </button>
       </form>
     </div>
   );

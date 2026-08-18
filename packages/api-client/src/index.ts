@@ -179,7 +179,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       const params = new URLSearchParams();
       if (query?.city) params.set("city", query.city);
       if (query?.surface) params.set("surface", query.surface);
+      if (query?.format) params.set("format", query.format);
       if (query?.size) params.set("size", query.size);
+      if (query?.maxPriceMinor !== undefined) params.set("maxPriceMinor", String(query.maxPriceMinor));
       if (query?.maxPrice !== undefined) params.set("maxPrice", String(query.maxPrice));
       if (query?.lat !== undefined) params.set("lat", String(query.lat));
       if (query?.lng !== undefined) params.set("lng", String(query.lng));

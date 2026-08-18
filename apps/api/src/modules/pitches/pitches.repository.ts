@@ -11,6 +11,7 @@ const pitchInclude = {
 export type PitchWithSlots = Prisma.PitchGetPayload<{ include: typeof pitchInclude }>;
 
 export function createPitch(ownerId: string, data: CreatePitchInput): Promise<PitchWithSlots> {
+  const format = (data.format ?? data.size)!;
   return prisma.pitch.create({
     data: {
       ownerId,
@@ -21,8 +22,9 @@ export function createPitch(ownerId: string, data: CreatePitchInput): Promise<Pi
       lat: data.lat,
       lng: data.lng,
       surface: data.surface,
-      size: data.size,
-      pricePerHour: data.pricePerHour,
+      size: format,
+      priceAmountMinor: data.hourlyRate.amountMinor,
+      currency: data.hourlyRate.currency,
       amenities: data.amenities ?? [],
       photos: data.photos ?? [],
     },
@@ -56,11 +58,13 @@ export async function findPitches(query: PitchQuery): Promise<PitchWithSlots[]> 
   if (query.surface) {
     where.surface = query.surface;
   }
-  if (query.size) {
-    where.size = query.size;
+  const format = query.format ?? query.size;
+  if (format) {
+    where.size = format;
   }
-  if (query.maxPrice !== undefined) {
-    where.pricePerHour = { lte: query.maxPrice };
+  const maxPriceMinor = query.maxPriceMinor ?? query.maxPrice;
+  if (maxPriceMinor !== undefined) {
+    where.priceAmountMinor = { lte: maxPriceMinor };
   }
 
   const pitches = await prisma.pitch.findMany({
@@ -94,6 +98,7 @@ export async function findPitches(query: PitchQuery): Promise<PitchWithSlots[]> 
 }
 
 export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWithSlots> {
+  const format = data.format ?? data.size;
   return prisma.pitch.update({
     where: { id },
     data: {
@@ -104,8 +109,11 @@ export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWi
       ...(data.lat !== undefined && { lat: data.lat }),
       ...(data.lng !== undefined && { lng: data.lng }),
       ...(data.surface !== undefined && { surface: data.surface }),
-      ...(data.size !== undefined && { size: data.size }),
-      ...(data.pricePerHour !== undefined && { pricePerHour: data.pricePerHour }),
+      ...(format !== undefined && { size: format }),
+      ...(data.hourlyRate !== undefined && {
+        priceAmountMinor: data.hourlyRate.amountMinor,
+        currency: data.hourlyRate.currency,
+      }),
       ...(data.amenities !== undefined && { amenities: data.amenities }),
       ...(data.photos !== undefined && { photos: data.photos }),
       ...(data.isActive !== undefined && { isActive: data.isActive }),
