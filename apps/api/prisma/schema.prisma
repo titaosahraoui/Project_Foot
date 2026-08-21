@@ -103,22 +103,25 @@ model Pitch {
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
-  slots        PitchSlot[]
+  availabilityRules PitchAvailabilityRule[]
 
   @@map("pitches")
 }
 
-model PitchSlot {
-  id         String   @id @default(uuid())
-  pitchId    String
-  pitch      Pitch    @relation(fields: [pitchId], references: [id], onDelete: Cascade)
-  dayOfWeek  Int      // 0 = Sunday, 6 = Saturday
-  startTime  String   // "09:00"
-  endTime    String   // "10:00"
-  isBookable Boolean  @default(true)
+model PitchAvailabilityRule {
+  id          String   @id @default(uuid())
+  pitchId     String
+  pitch       Pitch    @relation(fields: [pitchId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int      // 0 = Sunday, 6 = Saturday
+  startMinute Int      // 0..1440
+  endMinute   Int      // 0..1440
+  timezone    String   @default("Africa/Algiers")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  @@unique([pitchId, dayOfWeek, startTime])
-  @@map("pitch_slots")
+  @@index([pitchId, dayOfWeek])
+  @@map("pitch_availability_rules")
 }
 
 enum TeamMemberRole {

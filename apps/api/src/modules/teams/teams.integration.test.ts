@@ -29,7 +29,7 @@ let member3Token = "";
 let member3Id = "";
 let member4Token = "";
 let member4Id = "";
-let outsiderToken = "";
+let _outsiderToken = "";
 let outsiderId = "";
 
 let teamId = "";
@@ -80,7 +80,7 @@ beforeAll(async () => {
     password,
     displayName: "Outsider User",
   });
-  outsiderToken = out.accessToken;
+  _outsiderToken = out.accessToken;
   outsiderId = out.user.id;
 });
 

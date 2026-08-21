@@ -3,6 +3,7 @@ import {
   createPitchSchema,
   createPitchSlotSchema,
   pitchQuerySchema,
+  setPitchAvailabilityRulesSchema,
   updatePitchSchema,
 } from "@footconnect/shared";
 import { z } from "zod";
@@ -36,6 +37,18 @@ export async function updatePitchHandler(req: Request, res: Response): Promise<v
   res.json(pitch);
 }
 
+export async function getAvailabilityRulesHandler(req: Request, res: Response): Promise<void> {
+  const rules = await service.getAvailabilityRules(req.params.id!);
+  res.json(rules);
+}
+
+export async function setAvailabilityRulesHandler(req: Request, res: Response): Promise<void> {
+  const { rules } = setPitchAvailabilityRulesSchema.parse(req.body);
+  const updatedRules = await service.setAvailabilityRules(req.userId!, req.params.id!, rules);
+  res.json(updatedRules);
+}
+
+// Deprecated handlers for backwards compatibility
 export async function getPitchSlotsHandler(req: Request, res: Response): Promise<void> {
   const slots = await service.getPitchSlots(req.params.id!);
   res.json(slots);

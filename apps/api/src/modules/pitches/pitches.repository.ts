@@ -1,16 +1,21 @@
 import { Prisma } from "@prisma/client";
-import type { CreatePitchInput, CreatePitchSlotInput, PitchQuery, UpdatePitchInput } from "@footconnect/shared";
+import type {
+  CreatePitchInput,
+  PitchQuery,
+  SetPitchAvailabilityRuleItem,
+  UpdatePitchInput,
+} from "@footconnect/shared";
 import { prisma } from "../../lib/prisma";
 
 const pitchInclude = {
-  slots: {
-    orderBy: [{ dayOfWeek: "asc" as const }, { startTime: "asc" as const }],
+  availabilityRules: {
+    orderBy: [{ dayOfWeek: "asc" as const }, { startMinute: "asc" as const }],
   },
 } satisfies Prisma.PitchInclude;
 
-export type PitchWithSlots = Prisma.PitchGetPayload<{ include: typeof pitchInclude }>;
+export type PitchWithRules = Prisma.PitchGetPayload<{ include: typeof pitchInclude }>;
 
-export function createPitch(ownerId: string, data: CreatePitchInput): Promise<PitchWithSlots> {
+export function createPitch(ownerId: string, data: CreatePitchInput): Promise<PitchWithRules> {
   const format = (data.format ?? data.size)!;
   return prisma.pitch.create({
     data: {
@@ -32,14 +37,14 @@ export function createPitch(ownerId: string, data: CreatePitchInput): Promise<Pi
   });
 }
 
-export function findPitchById(id: string): Promise<PitchWithSlots | null> {
+export function findPitchById(id: string): Promise<PitchWithRules | null> {
   return prisma.pitch.findUnique({
     where: { id },
     include: pitchInclude,
   });
 }
 
-export function findMyPitches(ownerId: string): Promise<PitchWithSlots[]> {
+export function findMyPitches(ownerId: string): Promise<PitchWithRules[]> {
   return prisma.pitch.findMany({
     where: { ownerId },
     include: pitchInclude,
@@ -47,7 +52,7 @@ export function findMyPitches(ownerId: string): Promise<PitchWithSlots[]> {
   });
 }
 
-export async function findPitches(query: PitchQuery): Promise<PitchWithSlots[]> {
+export async function findPitches(query: PitchQuery): Promise<PitchWithRules[]> {
   const where: Prisma.PitchWhereInput = {
     isActive: true,
   };
@@ -97,7 +102,7 @@ export async function findPitches(query: PitchQuery): Promise<PitchWithSlots[]> 
   return pitches;
 }
 
-export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWithSlots> {
+export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWithRules> {
   const format = data.format ?? data.size;
   return prisma.pitch.update({
     where: { id },
@@ -122,36 +127,34 @@ export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWi
   });
 }
 
-export function findPitchSlots(pitchId: string) {
-  return prisma.pitchSlot.findMany({
+export function findAvailabilityRules(pitchId: string) {
+  return prisma.pitchAvailabilityRule.findMany({
     where: { pitchId },
-    orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
+    orderBy: [{ dayOfWeek: "asc" }, { startMinute: "asc" }],
   });
 }
 
-export async function upsertPitchSlots(pitchId: string, slots: CreatePitchSlotInput[]) {
-  const operations = slots.map((s) =>
-    prisma.pitchSlot.upsert({
-      where: {
-        pitchId_dayOfWeek_startTime: {
+export async function replaceAvailabilityRules(
+  pitchId: string,
+  rules: SetPitchAvailabilityRuleItem[],
+) {
+  return prisma.$transaction(async (tx) => {
+    await tx.pitchAvailabilityRule.deleteMany({ where: { pitchId } });
+    if (rules.length > 0) {
+      await tx.pitchAvailabilityRule.createMany({
+        data: rules.map((r) => ({
           pitchId,
-          dayOfWeek: s.dayOfWeek,
-          startTime: s.startTime,
-        },
-      },
-      create: {
-        pitchId,
-        dayOfWeek: s.dayOfWeek,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        isBookable: s.isBookable ?? true,
-      },
-      update: {
-        endTime: s.endTime,
-        isBookable: s.isBookable ?? true,
-      },
-    }),
-  );
-
-  return prisma.$transaction(operations);
+          dayOfWeek: r.dayOfWeek,
+          startMinute: r.startMinute,
+          endMinute: r.endMinute,
+          timezone: "Africa/Algiers",
+          isActive: r.isActive,
+        })),
+      });
+    }
+    return tx.pitchAvailabilityRule.findMany({
+      where: { pitchId },
+      orderBy: [{ dayOfWeek: "asc" }, { startMinute: "asc" }],
+    });
+  });
 }

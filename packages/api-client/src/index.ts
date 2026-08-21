@@ -9,10 +9,12 @@ import type {
   Invitation,
   LoginInput,
   Pitch,
+  PitchAvailabilityRule,
   PitchDetail,
   PitchQuery,
   PitchSlot,
   RegisterInput,
+  SetPitchAvailabilityRulesInput,
   SetTeamLineupInput,
   TeamDetail,
   TeamLineup,
@@ -82,7 +84,14 @@ export interface ApiClient {
   getPitch(id: string): Promise<PitchDetail>;
   createPitch(input: CreatePitchInput): Promise<PitchDetail>;
   updatePitch(id: string, input: UpdatePitchInput): Promise<PitchDetail>;
+  getPitchAvailabilityRules(pitchId: string): Promise<PitchAvailabilityRule[]>;
+  setPitchAvailabilityRules(
+    pitchId: string,
+    input: SetPitchAvailabilityRulesInput,
+  ): Promise<PitchAvailabilityRule[]>;
+  /** @deprecated Use getPitchAvailabilityRules instead. Will be removed in M05-T06. */
   getPitchSlots(pitchId: string): Promise<PitchSlot[]>;
+  /** @deprecated Use setPitchAvailabilityRules instead. Will be removed in M05-T06. */
   createPitchSlots(pitchId: string, slots: CreatePitchSlotInput[]): Promise<PitchSlot[]>;
 }
 
@@ -118,13 +127,14 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   const json = (data?: unknown) => (data === undefined ? undefined : JSON.stringify(data));
   const post = <T>(path: string, data?: unknown) =>
     request<T>(path, { method: "POST", body: json(data) });
+  const put = <T>(path: string, data?: unknown) =>
+    request<T>(path, { method: "PUT", body: json(data) });
 
   return {
     request,
     get: <T>(path: string) => request<T>(path),
     post,
-    put: <T>(path: string, data?: unknown) =>
-      request<T>(path, { method: "PUT", body: json(data) }),
+    put,
     patch: <T>(path: string, data?: unknown) =>
       request<T>(path, { method: "PATCH", body: json(data) }),
     delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
@@ -156,10 +166,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     reactivateTeam: (teamId) => post<TeamDetail>(`/api/v1/teams/${teamId}/reactivate`),
     getTeamLineups: (teamId) => request<TeamLineup[]>(`/api/v1/teams/${teamId}/lineups`),
     setTeamLineup: (teamId, format, input) =>
-      request<TeamLineup>(`/api/v1/teams/${teamId}/lineups/${format}`, {
-        method: "PUT",
-        body: json(input),
-      }),
+      put<TeamLineup>(`/api/v1/teams/${teamId}/lineups/${format}`, input),
     inviteToTeam: async (teamId, email) => {
       await post<void>(`/api/v1/teams/${teamId}/invitations`, { email });
     },
@@ -181,7 +188,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       if (query?.surface) params.set("surface", query.surface);
       if (query?.format) params.set("format", query.format);
       if (query?.size) params.set("size", query.size);
-      if (query?.maxPriceMinor !== undefined) params.set("maxPriceMinor", String(query.maxPriceMinor));
+      if (query?.maxPriceMinor !== undefined)
+        params.set("maxPriceMinor", String(query.maxPriceMinor));
       if (query?.maxPrice !== undefined) params.set("maxPrice", String(query.maxPrice));
       if (query?.lat !== undefined) params.set("lat", String(query.lat));
       if (query?.lng !== undefined) params.set("lng", String(query.lng));
@@ -197,8 +205,43 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         method: "PATCH",
         body: json(input),
       }),
-    getPitchSlots: (pitchId) => request<PitchSlot[]>(`/api/v1/pitches/${pitchId}/slots`),
-    createPitchSlots: (pitchId, slots) =>
-      post<PitchSlot[]>(`/api/v1/pitches/${pitchId}/slots`, { slots }),
+    getPitchAvailabilityRules: (pitchId) =>
+      request<PitchAvailabilityRule[]>(`/api/v1/pitches/${pitchId}/availability-rules`),
+    setPitchAvailabilityRules: (pitchId, input) =>
+      put<PitchAvailabilityRule[]>(`/api/v1/pitches/${pitchId}/availability-rules`, input),
+    getPitchSlots: async (pitchId) => {
+      const rules = await request<PitchAvailabilityRule[]>(
+        `/api/v1/pitches/${pitchId}/availability-rules`,
+      );
+      return rules.map((r) => ({
+        id: r.id,
+        pitchId: r.pitchId,
+        dayOfWeek: r.dayOfWeek,
+        startTime: r.startTime,
+        endTime: r.endTime,
+        isBookable: r.isActive,
+      }));
+    },
+    createPitchSlots: async (pitchId, slots) => {
+      const rules = await put<PitchAvailabilityRule[]>(
+        `/api/v1/pitches/${pitchId}/availability-rules`,
+        {
+          rules: slots.map((s) => ({
+            dayOfWeek: s.dayOfWeek,
+            startTime: s.startTime,
+            endTime: s.endTime,
+            isActive: s.isBookable ?? true,
+          })),
+        },
+      );
+      return rules.map((r) => ({
+        id: r.id,
+        pitchId: r.pitchId,
+        dayOfWeek: r.dayOfWeek,
+        startTime: r.startTime,
+        endTime: r.endTime,
+        isBookable: r.isActive,
+      }));
+    },
   };
 }

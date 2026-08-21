@@ -12,10 +12,12 @@ import {
 const app = createApp();
 const ownerEmail = uniqueEmail("pitch_owner");
 const playerEmail = uniqueEmail("pitch_player");
+const otherOwnerEmail = uniqueEmail("other_pitch_owner");
 const password = "password123";
 
 let ownerToken = "";
 let playerToken = "";
+let otherOwnerToken = "";
 let ownerId = "";
 
 beforeAll(async () => {
@@ -25,17 +27,26 @@ beforeAll(async () => {
 
   const player = await registerTestUser(app, { email: playerEmail, password, displayName: "Player" });
   playerToken = player.accessToken;
+
+  const otherOwner = await registerTestUser(app, {
+    email: otherOwnerEmail,
+    password,
+    displayName: "Other Owner",
+  });
+  otherOwnerToken = otherOwner.accessToken;
 });
 
 beforeEach(async () => {
-  await prisma.pitchSlot.deleteMany({});
+  await prisma.pitchAvailabilityRule.deleteMany({});
   await prisma.pitch.deleteMany({});
 });
 
 afterAll(async () => {
-  await prisma.pitchSlot.deleteMany({});
+  await prisma.pitchAvailabilityRule.deleteMany({});
   await prisma.pitch.deleteMany({});
-  await prisma.user.deleteMany({ where: { email: { in: [ownerEmail, playerEmail] } } });
+  await prisma.user.deleteMany({
+    where: { email: { in: [ownerEmail, playerEmail, otherOwnerEmail] } },
+  });
   await disconnectTestDependencies();
 });
 
@@ -71,7 +82,6 @@ describe("pitches flow (integration - M05-T01)", () => {
       currency: "DZD",
     });
 
-    // Verify in database that priceAmountMinor is integer 400000 and currency is DZD
     const dbPitch = await prisma.pitch.findUnique({ where: { id: res.body.id } });
     expect(dbPitch).not.toBeNull();
     expect(dbPitch?.priceAmountMinor).toBe(400000);
@@ -106,7 +116,6 @@ describe("pitches flow (integration - M05-T01)", () => {
   });
 
   it("rejects invalid money configurations (non-DZD, negative, fractional, unsafe)", async () => {
-    // 1. Non-DZD currency
     const nonDzdRes = await request(app)
       .post("/api/v1/pitches")
       .set(authHeader(ownerToken))
@@ -125,7 +134,6 @@ describe("pitches flow (integration - M05-T01)", () => {
       });
     expect(nonDzdRes.status).toBe(400);
 
-    // 2. Negative amountMinor
     const negRes = await request(app)
       .post("/api/v1/pitches")
       .set(authHeader(ownerToken))
@@ -144,7 +152,6 @@ describe("pitches flow (integration - M05-T01)", () => {
       });
     expect(negRes.status).toBe(400);
 
-    // 3. Fractional amountMinor
     const fracRes = await request(app)
       .post("/api/v1/pitches")
       .set(authHeader(ownerToken))
@@ -165,7 +172,6 @@ describe("pitches flow (integration - M05-T01)", () => {
   });
 
   it("filters pitches by maxPrice in minor units and format", async () => {
-    // Create Pitch A (4,000 DZD = 400,000 minor)
     const pitchA = await prisma.pitch.create({
       data: {
         ownerId,
@@ -182,7 +188,6 @@ describe("pitches flow (integration - M05-T01)", () => {
       },
     });
 
-    // Create Pitch B (8,000 DZD = 800,000 minor)
     const pitchB = await prisma.pitch.create({
       data: {
         ownerId,
@@ -199,7 +204,6 @@ describe("pitches flow (integration - M05-T01)", () => {
       },
     });
 
-    // Query with maxPriceMinor: 500,000 (should return Pitch A, but not Pitch B)
     const resUnder5k = await request(app)
       .get("/api/v1/pitches")
       .query({ maxPriceMinor: 500000 });
@@ -208,7 +212,6 @@ describe("pitches flow (integration - M05-T01)", () => {
     expect(resUnder5k.body.some((p: { id: string }) => p.id === pitchA.id)).toBe(true);
     expect(resUnder5k.body.some((p: { id: string }) => p.id === pitchB.id)).toBe(false);
 
-    // Query with format: ELEVEN_A_SIDE
     const resFormat = await request(app)
       .get("/api/v1/pitches")
       .query({ format: "ELEVEN_A_SIDE" });
@@ -245,13 +248,13 @@ describe("pitches flow (integration - M05-T01)", () => {
 
     const farRes = await request(app)
       .get("/api/v1/pitches")
-      .query({ lat: 40.4168, lng: -3.7038, radiusKm: 10 }); // Madrid coordinates
+      .query({ lat: 40.4168, lng: -3.7038, radiusKm: 10 });
 
     expect(farRes.status).toBe(200);
     expect(farRes.body.find((p: { id: string }) => p.id === algiersPitch.id)).toBeUndefined();
   });
 
-  it("fetches single pitch details with slots", async () => {
+  it("fetches single pitch details with availability rules", async () => {
     const pitch = await prisma.pitch.create({
       data: {
         ownerId,
@@ -275,69 +278,8 @@ describe("pitches flow (integration - M05-T01)", () => {
       amountMinor: 500000,
       currency: "DZD",
     });
+    expect(res.body.availabilityRules).toEqual([]);
     expect(res.body.slots).toEqual([]);
-  });
-
-  it("allows owner to configure and list pitch slots", async () => {
-    const pitch = await prisma.pitch.create({
-      data: {
-        ownerId,
-        name: "Slot Pitch",
-        address: "Address",
-        city: "Algiers",
-        lat: 36.75,
-        lng: 3.04,
-        surface: "ARTIFICIAL_TURF",
-        size: "SEVEN_A_SIDE",
-        priceAmountMinor: 400000,
-        currency: "DZD",
-        isActive: true,
-      },
-    });
-
-    const res = await request(app)
-      .post(`/api/v1/pitches/${pitch.id}/slots`)
-      .set(authHeader(ownerToken))
-      .send({
-        slots: [
-          { dayOfWeek: 1, startTime: "18:00", endTime: "19:00", isBookable: true },
-          { dayOfWeek: 1, startTime: "19:00", endTime: "20:00", isBookable: true },
-        ],
-      });
-
-    expect(res.status).toBe(201);
-    expect(res.body).toHaveLength(2);
-
-    const listRes = await request(app).get(`/api/v1/pitches/${pitch.id}/slots`);
-    expect(listRes.status).toBe(200);
-    expect(listRes.body).toHaveLength(2);
-  });
-
-  it("blocks a non-owner from setting pitch slots", async () => {
-    const pitch = await prisma.pitch.create({
-      data: {
-        ownerId,
-        name: "Owner Pitch",
-        address: "Address",
-        city: "Algiers",
-        lat: 36.75,
-        lng: 3.04,
-        surface: "ARTIFICIAL_TURF",
-        size: "SEVEN_A_SIDE",
-        priceAmountMinor: 400000,
-        currency: "DZD",
-        isActive: true,
-      },
-    });
-
-    const res = await request(app)
-      .post(`/api/v1/pitches/${pitch.id}/slots`)
-      .set(authHeader(playerToken))
-      .send({
-        slots: [{ dayOfWeek: 2, startTime: "10:00", endTime: "11:00" }],
-      });
-
-    expect(res.status).toBe(403);
   });
 
   it("allows owner to update pitch details including hourlyRate", async () => {
@@ -372,5 +314,250 @@ describe("pitches flow (integration - M05-T01)", () => {
       amountMinor: 450000,
       currency: "DZD",
     });
+  });
+});
+
+describe("pitches availability rules (integration - M05-T02)", () => {
+  let testPitchId = "";
+
+  beforeEach(async () => {
+    const pitch = await prisma.pitch.create({
+      data: {
+        ownerId,
+        name: "Olympic Complex Pitch",
+        address: "Route de Ben Aknoun",
+        city: "Algiers",
+        lat: 36.76,
+        lng: 3.02,
+        surface: "ARTIFICIAL_TURF",
+        size: "SEVEN_A_SIDE",
+        priceAmountMinor: 500000,
+        currency: "DZD",
+        isActive: true,
+      },
+    });
+    testPitchId = pitch.id;
+  });
+
+  it("replaces availability rules in full and serializes local time as HH:mm with fixed Africa/Algiers timezone", async () => {
+    const putRes = await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(ownerToken))
+      .send({
+        rules: [
+          { dayOfWeek: 0, startMinute: 540, endMinute: 720, isActive: true }, // Sunday 09:00 - 12:00
+          { dayOfWeek: 1, startTime: "18:00", endTime: "21:00", isActive: true }, // Monday 18:00 - 21:00 (1080 - 1260)
+          { dayOfWeek: 5, startMinute: 840, endMinute: 1320, isActive: false }, // Friday 14:00 - 22:00 inactive
+        ],
+      });
+
+    expect(putRes.status).toBe(200);
+    expect(putRes.body).toHaveLength(3);
+
+    // Rule 0: Sunday 09:00 - 12:00
+    const r0 = putRes.body[0];
+    expect(r0.dayOfWeek).toBe(0);
+    expect(r0.startMinute).toBe(540);
+    expect(r0.endMinute).toBe(720);
+    expect(r0.startTime).toBe("09:00");
+    expect(r0.endTime).toBe("12:00");
+    expect(r0.timezone).toBe("Africa/Algiers");
+    expect(r0.isActive).toBe(true);
+
+    // Rule 1: Monday 18:00 - 21:00
+    const r1 = putRes.body[1];
+    expect(r1.dayOfWeek).toBe(1);
+    expect(r1.startMinute).toBe(1080);
+    expect(r1.endMinute).toBe(1260);
+    expect(r1.startTime).toBe("18:00");
+    expect(r1.endTime).toBe("21:00");
+    expect(r1.timezone).toBe("Africa/Algiers");
+    expect(r1.isActive).toBe(true);
+
+    // Rule 2: Friday 14:00 - 22:00
+    const r2 = putRes.body[2];
+    expect(r2.dayOfWeek).toBe(5);
+    expect(r2.startMinute).toBe(840);
+    expect(r2.endMinute).toBe(1320);
+    expect(r2.startTime).toBe("14:00");
+    expect(r2.endTime).toBe("22:00");
+    expect(r2.isActive).toBe(false);
+
+    // Verify GET returns identical structure
+    const getRes = await request(app).get(`/api/v1/pitches/${testPitchId}/availability-rules`);
+    expect(getRes.status).toBe(200);
+    expect(getRes.body).toHaveLength(3);
+    expect(getRes.body).toEqual(putRes.body);
+
+    // Verify PitchDetail also exposes the rules
+    const detailRes = await request(app).get(`/api/v1/pitches/${testPitchId}`);
+    expect(detailRes.status).toBe(200);
+    expect(detailRes.body.availabilityRules).toHaveLength(3);
+    expect(detailRes.body.availabilityRules[0].startTime).toBe("09:00");
+  });
+
+  it("atomically replaces the entire rule set when updating", async () => {
+    // 1. First PUT: 2 rules
+    await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(ownerToken))
+      .send({
+        rules: [
+          { dayOfWeek: 1, startMinute: 600, endMinute: 720 },
+          { dayOfWeek: 2, startMinute: 600, endMinute: 720 },
+        ],
+      });
+
+    const get1 = await request(app).get(`/api/v1/pitches/${testPitchId}/availability-rules`);
+    expect(get1.body).toHaveLength(2);
+
+    // 2. Second PUT: 1 rule (should replace, not append)
+    const put2 = await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(ownerToken))
+      .send({
+        rules: [{ dayOfWeek: 3, startMinute: 1000, endMinute: 1100 }],
+      });
+
+    expect(put2.status).toBe(200);
+    expect(put2.body).toHaveLength(1);
+    expect(put2.body[0].dayOfWeek).toBe(3);
+
+    const get2 = await request(app).get(`/api/v1/pitches/${testPitchId}/availability-rules`);
+    expect(get2.body).toHaveLength(1);
+    expect(get2.body[0].dayOfWeek).toBe(3);
+  });
+
+  it("rejects endMinute <= startMinute with 400", async () => {
+    // Equal start and end
+    const eqRes = await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(ownerToken))
+      .send({
+        rules: [{ dayOfWeek: 1, startMinute: 600, endMinute: 600 }],
+      });
+    expect(eqRes.status).toBe(400);
+
+    // End before start
+    const revRes = await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(ownerToken))
+      .send({
+        rules: [{ dayOfWeek: 1, startMinute: 700, endMinute: 600 }],
+      });
+    expect(revRes.status).toBe(400);
+  });
+
+  it("rejects rules shorter than 30 minutes with 400", async () => {
+    const res = await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(ownerToken))
+      .send({
+        rules: [{ dayOfWeek: 1, startMinute: 600, endMinute: 620 }], // 20 minutes
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects overlapping active rules for the same pitch and day with 400", async () => {
+    const res = await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(ownerToken))
+      .send({
+        rules: [
+          { dayOfWeek: 1, startMinute: 600, endMinute: 720, isActive: true }, // 10:00 - 12:00
+          { dayOfWeek: 1, startMinute: 690, endMinute: 800, isActive: true }, // 11:30 - 13:20 (overlaps!)
+        ],
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it("allows non-overlapping active rules on the same day and overlapping inactive rules", async () => {
+    const res = await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(ownerToken))
+      .send({
+        rules: [
+          { dayOfWeek: 1, startMinute: 600, endMinute: 720, isActive: true }, // 10:00 - 12:00
+          { dayOfWeek: 1, startMinute: 720, endMinute: 840, isActive: true }, // 12:00 - 14:00 (adjacent, not overlapping)
+          { dayOfWeek: 1, startMinute: 660, endMinute: 780, isActive: false }, // Inactive overlaps with active (allowed)
+        ],
+      });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(3);
+  });
+
+  it("blocks non-owner with 403 on PUT", async () => {
+    const res1 = await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(otherOwnerToken))
+      .send({
+        rules: [{ dayOfWeek: 1, startMinute: 600, endMinute: 720 }],
+      });
+    expect(res1.status).toBe(403);
+
+    const res2 = await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(playerToken))
+      .send({
+        rules: [{ dayOfWeek: 1, startMinute: 600, endMinute: 720 }],
+      });
+    expect(res2.status).toBe(403);
+  });
+
+  it("blocks unauthenticated requests with 401 on PUT", async () => {
+    const res = await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .send({
+        rules: [{ dayOfWeek: 1, startMinute: 600, endMinute: 720 }],
+      });
+    expect(res.status).toBe(401);
+  });
+
+  it("rolls back all changes if any rule in the transaction fails validation", async () => {
+    // 1. Initial valid rules
+    await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(ownerToken))
+      .send({
+        rules: [{ dayOfWeek: 1, startMinute: 600, endMinute: 720 }],
+      });
+
+    // 2. Attempt update with one valid rule and one overlapping rule
+    const badRes = await request(app)
+      .put(`/api/v1/pitches/${testPitchId}/availability-rules`)
+      .set(authHeader(ownerToken))
+      .send({
+        rules: [
+          { dayOfWeek: 2, startMinute: 600, endMinute: 720, isActive: true },
+          { dayOfWeek: 2, startMinute: 660, endMinute: 780, isActive: true }, // overlaps!
+        ],
+      });
+    expect(badRes.status).toBe(400);
+
+    // 3. Verify original rule on day 1 is still intact and no day 2 rule exists
+    const checkRes = await request(app).get(`/api/v1/pitches/${testPitchId}/availability-rules`);
+    expect(checkRes.body).toHaveLength(1);
+    expect(checkRes.body[0].dayOfWeek).toBe(1);
+  });
+
+  it("supports deprecated slot routes for intermediate client backwards compatibility", async () => {
+    const postRes = await request(app)
+      .post(`/api/v1/pitches/${testPitchId}/slots`)
+      .set(authHeader(ownerToken))
+      .send({
+        slots: [
+          { dayOfWeek: 2, startTime: "18:00", endTime: "19:00", isBookable: true },
+          { dayOfWeek: 2, startTime: "19:00", endTime: "20:00", isBookable: true },
+        ],
+      });
+
+    expect(postRes.status).toBe(201);
+    expect(postRes.body).toHaveLength(2);
+    expect(postRes.body[0].startTime).toBe("18:00");
+    expect(postRes.body[0].endTime).toBe("19:00");
+
+    const getSlotsRes = await request(app).get(`/api/v1/pitches/${testPitchId}/slots`);
+    expect(getSlotsRes.status).toBe(200);
+    expect(getSlotsRes.body).toHaveLength(2);
   });
 });
