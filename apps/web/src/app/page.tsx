@@ -64,7 +64,7 @@ export default function Home() {
             className="flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-[#c4c9ac] hover:text-white hover:bg-[#1d201e] font-headline text-sm font-semibold tracking-wide transition-all"
           >
             <span>📅</span>
-            <span>TODAY'S SLOTS</span>
+            <span>TODAY&apos;S SLOTS</span>
           </a>
           <a
             href="#analytics"
@@ -159,7 +159,7 @@ export default function Home() {
             </div>
 
             <div className="layer-1 rounded-xl p-5 border border-white/5 glow-hover transition-all">
-              <div className="text-[#8e9379] font-mono text-xs uppercase tracking-wider">Today's Bookings</div>
+              <div className="text-[#8e9379] font-mono text-xs uppercase tracking-wider">Today&apos;s Bookings</div>
               <div className="font-mono text-3xl font-bold text-[#c3f400] mt-2">12</div>
               <div className="text-xs text-[#c4c9ac] mt-1">Next kickoff: 21:00</div>
             </div>
