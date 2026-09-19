@@ -11,11 +11,15 @@ const pitchInclude = {
   availabilityRules: {
     orderBy: [{ dayOfWeek: "asc" as const }, { startMinute: "asc" as const }],
   },
+  blocks: {
+    where: { cancelledAt: null },
+    orderBy: { startAt: "asc" as const },
+  },
 } satisfies Prisma.PitchInclude;
 
-export type PitchWithRules = Prisma.PitchGetPayload<{ include: typeof pitchInclude }>;
+export type PitchWithRulesAndBlocks = Prisma.PitchGetPayload<{ include: typeof pitchInclude }>;
 
-export function createPitch(ownerId: string, data: CreatePitchInput): Promise<PitchWithRules> {
+export function createPitch(ownerId: string, data: CreatePitchInput): Promise<PitchWithRulesAndBlocks> {
   const format = (data.format ?? data.size)!;
   return prisma.pitch.create({
     data: {
@@ -37,14 +41,14 @@ export function createPitch(ownerId: string, data: CreatePitchInput): Promise<Pi
   });
 }
 
-export function findPitchById(id: string): Promise<PitchWithRules | null> {
+export function findPitchById(id: string): Promise<PitchWithRulesAndBlocks | null> {
   return prisma.pitch.findUnique({
     where: { id },
     include: pitchInclude,
   });
 }
 
-export function findMyPitches(ownerId: string): Promise<PitchWithRules[]> {
+export function findMyPitches(ownerId: string): Promise<PitchWithRulesAndBlocks[]> {
   return prisma.pitch.findMany({
     where: { ownerId },
     include: pitchInclude,
@@ -52,7 +56,7 @@ export function findMyPitches(ownerId: string): Promise<PitchWithRules[]> {
   });
 }
 
-export async function findPitches(query: PitchQuery): Promise<PitchWithRules[]> {
+export async function findPitches(query: PitchQuery): Promise<PitchWithRulesAndBlocks[]> {
   const where: Prisma.PitchWhereInput = {
     isActive: true,
   };
@@ -102,7 +106,7 @@ export async function findPitches(query: PitchQuery): Promise<PitchWithRules[]> 
   return pitches;
 }
 
-export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWithRules> {
+export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWithRulesAndBlocks> {
   const format = data.format ?? data.size;
   return prisma.pitch.update({
     where: { id },
@@ -156,5 +160,43 @@ export async function replaceAvailabilityRules(
       where: { pitchId },
       orderBy: [{ dayOfWeek: "asc" }, { startMinute: "asc" }],
     });
+  });
+}
+
+export function createPitchBlock(
+  pitchId: string,
+  data: { startAt: Date; endAt: Date; reason?: string | null; createdById: string },
+) {
+  return prisma.pitchBlock.create({
+    data: {
+      pitchId,
+      startAt: data.startAt,
+      endAt: data.endAt,
+      reason: data.reason ?? null,
+      createdById: data.createdById,
+    },
+  });
+}
+
+export function findPitchBlockById(id: string) {
+  return prisma.pitchBlock.findUnique({ where: { id } });
+}
+
+export function cancelPitchBlock(id: string) {
+  return prisma.pitchBlock.update({
+    where: { id },
+    data: { cancelledAt: new Date() },
+  });
+}
+
+export function findActivePitchBlocks(pitchId: string, from: Date, to: Date) {
+  return prisma.pitchBlock.findMany({
+    where: {
+      pitchId,
+      cancelledAt: null,
+      startAt: { lt: to },
+      endAt: { gt: from },
+    },
+    orderBy: { startAt: "asc" },
   });
 }

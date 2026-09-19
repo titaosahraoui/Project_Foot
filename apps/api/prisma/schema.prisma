@@ -104,6 +104,7 @@ model Pitch {
   updatedAt        DateTime     @updatedAt
 
   availabilityRules PitchAvailabilityRule[]
+  blocks            PitchBlock[]
 
   @@map("pitches")
 }
@@ -122,6 +123,21 @@ model PitchAvailabilityRule {
 
   @@index([pitchId, dayOfWeek])
   @@map("pitch_availability_rules")
+}
+
+model PitchBlock {
+  id          String    @id @default(uuid())
+  pitchId     String
+  pitch       Pitch     @relation(fields: [pitchId], references: [id], onDelete: Cascade)
+  startAt     DateTime
+  endAt       DateTime
+  reason      String?
+  createdById String
+  createdAt   DateTime  @default(now())
+  cancelledAt DateTime?
+
+  @@index([pitchId, startAt, endAt])
+  @@map("pitch_blocks")
 }
 
 enum TeamMemberRole {

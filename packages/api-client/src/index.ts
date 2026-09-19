@@ -1,6 +1,9 @@
 import type {
   AuthResponse,
   AuthUser,
+  AvailableSlot,
+  AvailableSlotQuery,
+  CreatePitchBlockInput,
   CreatePitchInput,
   CreatePitchSlotInput,
   CreateTeamInput,
@@ -10,6 +13,7 @@ import type {
   LoginInput,
   Pitch,
   PitchAvailabilityRule,
+  PitchBlock,
   PitchDetail,
   PitchQuery,
   PitchSlot,
@@ -89,6 +93,9 @@ export interface ApiClient {
     pitchId: string,
     input: SetPitchAvailabilityRulesInput,
   ): Promise<PitchAvailabilityRule[]>;
+  createPitchBlock(pitchId: string, input: CreatePitchBlockInput): Promise<PitchBlock>;
+  cancelPitchBlock(pitchId: string, blockId: string): Promise<void>;
+  getAvailableSlots(pitchId: string, query: AvailableSlotQuery): Promise<AvailableSlot[]>;
   /** @deprecated Use getPitchAvailabilityRules instead. Will be removed in M05-T06. */
   getPitchSlots(pitchId: string): Promise<PitchSlot[]>;
   /** @deprecated Use setPitchAvailabilityRules instead. Will be removed in M05-T06. */
@@ -209,6 +216,24 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       request<PitchAvailabilityRule[]>(`/api/v1/pitches/${pitchId}/availability-rules`),
     setPitchAvailabilityRules: (pitchId, input) =>
       put<PitchAvailabilityRule[]>(`/api/v1/pitches/${pitchId}/availability-rules`, input),
+    createPitchBlock: (pitchId, input) =>
+      post<PitchBlock>(`/api/v1/pitches/${pitchId}/blocks`, input),
+    cancelPitchBlock: async (pitchId, blockId) => {
+      await request<void>(`/api/v1/pitches/${pitchId}/blocks/${blockId}`, {
+        method: "DELETE",
+      });
+    },
+    getAvailableSlots: (pitchId, query) => {
+      const params = new URLSearchParams();
+      params.set("from", query.from);
+      params.set("to", query.to);
+      if (query.durationMinutes !== undefined) {
+        params.set("durationMinutes", String(query.durationMinutes));
+      }
+      return request<AvailableSlot[]>(
+        `/api/v1/pitches/${pitchId}/available-slots?${params.toString()}`,
+      );
+    },
     getPitchSlots: async (pitchId) => {
       const rules = await request<PitchAvailabilityRule[]>(
         `/api/v1/pitches/${pitchId}/availability-rules`,

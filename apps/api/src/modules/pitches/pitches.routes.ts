@@ -10,6 +10,7 @@ pitchesRouter.get("/", asyncHandler(c.searchPitchesHandler));
 pitchesRouter.get("/mine", requireAuth, asyncHandler(c.getMyPitchesHandler));
 pitchesRouter.get("/:id", asyncHandler(c.getPitchHandler));
 pitchesRouter.get("/:id/availability-rules", asyncHandler(c.getAvailabilityRulesHandler));
+pitchesRouter.get("/:id/available-slots", asyncHandler(c.getAvailableSlotsHandler));
 pitchesRouter.get("/:id/slots", asyncHandler(c.getPitchSlotsHandler));
 
 // Protected routes (pitch owners)
@@ -20,4 +21,6 @@ pitchesRouter.put(
   requireAuth,
   asyncHandler(c.setAvailabilityRulesHandler),
 );
+pitchesRouter.post("/:id/blocks", requireAuth, asyncHandler(c.createPitchBlockHandler));
+pitchesRouter.delete("/:id/blocks/:blockId", requireAuth, asyncHandler(c.cancelPitchBlockHandler));
 pitchesRouter.post("/:id/slots", requireAuth, asyncHandler(c.createPitchSlotsHandler));

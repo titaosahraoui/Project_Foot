@@ -1,9 +1,14 @@
 import {
+  AvailableSlot,
+  AvailableSlotQuery,
+  BlockingRange,
+  CreatePitchBlockInput,
   CreatePitchInput,
   CreatePitchSlotInput,
   minutesToTimeString,
   Pitch,
   PitchAvailabilityRule,
+  PitchBlock,
   PitchDetail,
   PitchQuery,
   PitchSlot,
@@ -12,8 +17,9 @@ import {
   UpdatePitchInput,
 } from "@footconnect/shared";
 import { HttpError } from "../../middleware/error-handler";
+import { computeAvailableSlots } from "./inventory";
 import * as repo from "./pitches.repository";
-import type { PitchWithRules } from "./pitches.repository";
+import type { PitchWithRulesAndBlocks } from "./pitches.repository";
 
 function toAvailabilityRule(r: {
   id: string;
@@ -41,7 +47,29 @@ function toAvailabilityRule(r: {
   };
 }
 
-function toPitch(p: PitchWithRules): Pitch {
+function toPitchBlock(b: {
+  id: string;
+  pitchId: string;
+  startAt: Date;
+  endAt: Date;
+  reason: string | null;
+  createdById: string;
+  createdAt: Date;
+  cancelledAt: Date | null;
+}): PitchBlock {
+  return {
+    id: b.id,
+    pitchId: b.pitchId,
+    startAt: b.startAt.toISOString(),
+    endAt: b.endAt.toISOString(),
+    reason: b.reason,
+    createdById: b.createdById,
+    createdAt: b.createdAt.toISOString(),
+    cancelledAt: b.cancelledAt ? b.cancelledAt.toISOString() : null,
+  };
+}
+
+function toPitch(p: PitchWithRulesAndBlocks): Pitch {
   return {
     id: p.id,
     ownerId: p.ownerId,
@@ -66,11 +94,13 @@ function toPitch(p: PitchWithRules): Pitch {
   };
 }
 
-function toPitchDetail(p: PitchWithRules): PitchDetail {
+function toPitchDetail(p: PitchWithRulesAndBlocks): PitchDetail {
   const rules = p.availabilityRules.map(toAvailabilityRule);
+  const blocks = p.blocks.map(toPitchBlock);
   return {
     ...toPitch(p),
     availabilityRules: rules,
+    blocks,
     slots: rules.map((r) => ({
       id: r.id,
       pitchId: r.pitchId,
@@ -83,7 +113,6 @@ function toPitchDetail(p: PitchWithRules): PitchDetail {
 }
 
 export function validateAvailabilityRules(rules: SetPitchAvailabilityRuleItem[]): void {
-  // 1. Validate each rule individually (min 30 min, start < end, 0..1440)
   for (const rule of rules) {
     if (rule.dayOfWeek < 0 || rule.dayOfWeek > 6) {
       throw new HttpError(400, "dayOfWeek must be between 0 and 6");
@@ -102,7 +131,6 @@ export function validateAvailabilityRules(rules: SetPitchAvailabilityRuleItem[])
     }
   }
 
-  // 2. Group active rules by dayOfWeek and check for overlaps
   const activeRulesByDay = new Map<number, SetPitchAvailabilityRuleItem[]>();
   for (const rule of rules) {
     if (!rule.isActive) continue;
@@ -183,6 +211,79 @@ export async function setAvailabilityRules(
 
   const updated = await repo.replaceAvailabilityRules(pitchId, rulesInput);
   return updated.map(toAvailabilityRule);
+}
+
+export async function createPitchBlock(
+  userId: string,
+  pitchId: string,
+  input: CreatePitchBlockInput,
+): Promise<PitchBlock> {
+  const pitch = await repo.findPitchById(pitchId);
+  if (!pitch) throw new HttpError(404, "Pitch not found");
+  if (pitch.ownerId !== userId) {
+    throw new HttpError(403, "Only the pitch owner can block this pitch");
+  }
+
+  const startAt = new Date(input.startAt);
+  const endAt = new Date(input.endAt);
+  if (isNaN(startAt.getTime()) || isNaN(endAt.getTime()) || endAt.getTime() <= startAt.getTime()) {
+    throw new HttpError(400, "endAt must be after startAt");
+  }
+
+  const block = await repo.createPitchBlock(pitchId, {
+    startAt,
+    endAt,
+    reason: input.reason ?? null,
+    createdById: userId,
+  });
+
+  return toPitchBlock(block);
+}
+
+export async function cancelPitchBlock(
+  userId: string,
+  pitchId: string,
+  blockId: string,
+): Promise<void> {
+  const pitch = await repo.findPitchById(pitchId);
+  if (!pitch) throw new HttpError(404, "Pitch not found");
+  if (pitch.ownerId !== userId) {
+    throw new HttpError(403, "Only the pitch owner can manage blocks for this pitch");
+  }
+
+  const block = await repo.findPitchBlockById(blockId);
+  if (!block || block.pitchId !== pitchId || block.cancelledAt !== null) {
+    throw new HttpError(404, "Pitch block not found");
+  }
+
+  await repo.cancelPitchBlock(blockId);
+}
+
+export async function getAvailableSlots(
+  pitchId: string,
+  query: AvailableSlotQuery,
+  extraBlocks?: BlockingRange[],
+): Promise<AvailableSlot[]> {
+  const pitch = await repo.findPitchById(pitchId);
+  if (!pitch) throw new HttpError(404, "Pitch not found");
+
+  const from = new Date(query.from);
+  const to = new Date(query.to);
+  const rules = await repo.findAvailabilityRules(pitchId);
+  const blocks = await repo.findActivePitchBlocks(pitchId, from, to);
+
+  return computeAvailableSlots({
+    hourlyRate: {
+      amountMinor: pitch.priceAmountMinor,
+      currency: "DZD",
+    },
+    rules: rules.map(toAvailabilityRule),
+    blocks: blocks.map(toPitchBlock),
+    from,
+    to,
+    durationMinutes: query.durationMinutes ?? 60,
+    extraBlocks,
+  });
 }
 
 // Deprecated compatibility methods for older clients

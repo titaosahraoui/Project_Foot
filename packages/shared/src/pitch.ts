@@ -105,6 +105,80 @@ export const setPitchAvailabilityRulesSchema = z.object({
 export type SetPitchAvailabilityRulesInput = z.input<typeof setPitchAvailabilityRulesSchema>;
 export type SetPitchAvailabilityRulesPayload = z.output<typeof setPitchAvailabilityRulesSchema>;
 
+export interface BlockingRange {
+  startAt: Date;
+  endAt: Date;
+}
+
+export const pitchBlockSchema = z.object({
+  id: z.string().uuid(),
+  pitchId: z.string().uuid(),
+  startAt: z.string(),
+  endAt: z.string(),
+  reason: z.string().nullable().optional(),
+  createdById: z.string().uuid(),
+  createdAt: z.string(),
+  cancelledAt: z.string().nullable().optional(),
+});
+export type PitchBlock = z.infer<typeof pitchBlockSchema>;
+
+export const createPitchBlockSchema = z
+  .object({
+    startAt: z.string().datetime({ offset: true }).or(z.string()),
+    endAt: z.string().datetime({ offset: true }).or(z.string()),
+    reason: z.string().max(500).optional(),
+  })
+  .refine(
+    (data) => {
+      const start = new Date(data.startAt).getTime();
+      const end = new Date(data.endAt).getTime();
+      return !isNaN(start) && !isNaN(end) && end > start;
+    },
+    {
+      message: "endAt must be after startAt",
+      path: ["endAt"],
+    },
+  );
+export type CreatePitchBlockInput = z.infer<typeof createPitchBlockSchema>;
+
+export const availableSlotQuerySchema = z
+  .object({
+    from: z.string().datetime({ offset: true }).or(z.string()),
+    to: z.string().datetime({ offset: true }).or(z.string()),
+    durationMinutes: z.coerce.number().int().min(30).max(180).default(60),
+  })
+  .refine(
+    (data) => {
+      const fromDate = new Date(data.from).getTime();
+      const toDate = new Date(data.to).getTime();
+      return !isNaN(fromDate) && !isNaN(toDate) && toDate > fromDate;
+    },
+    {
+      message: "to must be after from",
+      path: ["to"],
+    },
+  )
+  .refine(
+    (data) => {
+      const fromDate = new Date(data.from).getTime();
+      const toDate = new Date(data.to).getTime();
+      const maxRangeMs = 31 * 24 * 60 * 60 * 1000;
+      return toDate - fromDate <= maxRangeMs;
+    },
+    {
+      message: "Query range cannot exceed 31 days",
+      path: ["to"],
+    },
+  );
+export type AvailableSlotQuery = z.input<typeof availableSlotQuerySchema>;
+
+export const availableSlotSchema = z.object({
+  startAt: z.string(),
+  endAt: z.string(),
+  price: moneySchema,
+});
+export type AvailableSlot = z.infer<typeof availableSlotSchema>;
+
 /**
  * Deprecated PitchSlot schema kept for backwards compatibility until M05-T06.
  */
@@ -188,6 +262,7 @@ export type Pitch = z.infer<typeof pitchSchema>;
 export const pitchDetailSchema = pitchSchema.extend({
   availabilityRules: z.array(pitchAvailabilityRuleSchema),
   slots: z.array(pitchSlotSchema).default([]), // deprecated alias
+  blocks: z.array(pitchBlockSchema).optional(),
 });
 export type PitchDetail = z.infer<typeof pitchDetailSchema>;
 
