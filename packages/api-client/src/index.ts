@@ -5,7 +5,6 @@ import type {
   AvailableSlotQuery,
   CreatePitchBlockInput,
   CreatePitchInput,
-  CreatePitchSlotInput,
   CreateTeamInput,
   FormatCode,
   HealthStatus,
@@ -16,7 +15,6 @@ import type {
   PitchBlock,
   PitchDetail,
   PitchQuery,
-  PitchSlot,
   RegisterInput,
   SetPitchAvailabilityRulesInput,
   SetTeamLineupInput,
@@ -96,10 +94,6 @@ export interface ApiClient {
   createPitchBlock(pitchId: string, input: CreatePitchBlockInput): Promise<PitchBlock>;
   cancelPitchBlock(pitchId: string, blockId: string): Promise<void>;
   getAvailableSlots(pitchId: string, query: AvailableSlotQuery): Promise<AvailableSlot[]>;
-  /** @deprecated Use getPitchAvailabilityRules instead. Will be removed in M05-T06. */
-  getPitchSlots(pitchId: string): Promise<PitchSlot[]>;
-  /** @deprecated Use setPitchAvailabilityRules instead. Will be removed in M05-T06. */
-  createPitchSlots(pitchId: string, slots: CreatePitchSlotInput[]): Promise<PitchSlot[]>;
 }
 
 /**
@@ -233,40 +227,6 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       return request<AvailableSlot[]>(
         `/api/v1/pitches/${pitchId}/available-slots?${params.toString()}`,
       );
-    },
-    getPitchSlots: async (pitchId) => {
-      const rules = await request<PitchAvailabilityRule[]>(
-        `/api/v1/pitches/${pitchId}/availability-rules`,
-      );
-      return rules.map((r) => ({
-        id: r.id,
-        pitchId: r.pitchId,
-        dayOfWeek: r.dayOfWeek,
-        startTime: r.startTime,
-        endTime: r.endTime,
-        isBookable: r.isActive,
-      }));
-    },
-    createPitchSlots: async (pitchId, slots) => {
-      const rules = await put<PitchAvailabilityRule[]>(
-        `/api/v1/pitches/${pitchId}/availability-rules`,
-        {
-          rules: slots.map((s) => ({
-            dayOfWeek: s.dayOfWeek,
-            startTime: s.startTime,
-            endTime: s.endTime,
-            isActive: s.isBookable ?? true,
-          })),
-        },
-      );
-      return rules.map((r) => ({
-        id: r.id,
-        pitchId: r.pitchId,
-        dayOfWeek: r.dayOfWeek,
-        startTime: r.startTime,
-        endTime: r.endTime,
-        isBookable: r.isActive,
-      }));
     },
   };
 }

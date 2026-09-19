@@ -2,7 +2,6 @@ import { useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -11,8 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
-import type { Pitch, PitchSlot } from "@footconnect/shared";
-import { formatPitchPrice } from "@footconnect/shared";
+import type { Pitch } from "@footconnect/shared";
 import { colors, spacing, radii } from "@footconnect/ui";
 import {
   Badge,
@@ -22,14 +20,16 @@ import {
   Text,
   TrustSignalRing,
 } from "../components/ui";
+import { PitchCard, PitchDetailModal } from "../components/pitch";
+import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { fontFamily } from "../theme/fonts";
 
 const FORMATS = ["5v5", "7v7", "11v11"] as const;
 const DATES = ["Today", "Tomorrow", "This Week"] as const;
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export function PlayScreen() {
+  const { user } = useAuth();
   const [selectedFormat, setSelectedFormat] = useState<string>("5v5");
   const [selectedDate, setSelectedDate] = useState<string>("Today");
   const [activeTab, setActiveTab] = useState<"matches" | "pitches">("matches");
@@ -43,12 +43,6 @@ export function PlayScreen() {
   } = useQuery<Pitch[]>({
     queryKey: ["pitches-discovery"],
     queryFn: () => api.getPitches(),
-  });
-
-  const { data: slots, isLoading: slotsLoading } = useQuery<PitchSlot[]>({
-    queryKey: ["pitch-slots", selectedPitch?.id],
-    queryFn: () => api.getPitchSlots(selectedPitch!.id),
-    enabled: !!selectedPitch,
   });
 
   return (
@@ -271,94 +265,60 @@ export function PlayScreen() {
           </View>
         ) : (
           <View style={styles.pitchesContainer}>
-            {pitches?.map((p) => (
-              <TouchableOpacity
-                key={p.id}
-                activeOpacity={0.8}
-                onPress={() => setSelectedPitch(p)}
-              >
-                <Card style={styles.pitchItemCard}>
-                  <View style={styles.pitchItemTop}>
-                    <Text variant="titleM" color={colors.primary}>
-                      {p.name}
-                    </Text>
-                    <Text variant="titleS" color={colors.primaryContainer}>
-                      {formatPitchPrice(p.hourlyRate)}/h
-                    </Text>
-                  </View>
-                  <Text variant="labelSm" color={colors.onSurfaceVariant}>
-                    📍 {p.address}, {p.city}
-                  </Text>
-                  <View style={styles.badgeRow}>
-                    <Badge label={p.format.replace("_", " ")} tone="brand" />
-                    <Badge label={p.surface.replace("_", " ")} tone="neutral" />
-                  </View>
-                </Card>
-              </TouchableOpacity>
-            ))}
+            {isLoading ? (
+              <View style={styles.pitchesLoading}>
+                <ActivityIndicator size="large" color={colors.primaryContainer} />
+                <Text
+                  variant="caption"
+                  color={colors.textSecondary}
+                  style={{ marginTop: 8 }}
+                  allowFontScaling={true}
+                >
+                  Loading available pitches...
+                </Text>
+              </View>
+            ) : !pitches || pitches.length === 0 ? (
+              <Card style={styles.emptyPitchesCard}>
+                <Icon name="search" size={28} color={colors.outline} />
+                <Text
+                  variant="titleS"
+                  color={colors.primary}
+                  style={{ marginTop: 8 }}
+                  allowFontScaling={true}
+                >
+                  No Pitches Found
+                </Text>
+                <Text
+                  variant="caption"
+                  color={colors.textSecondary}
+                  style={{ textAlign: "center", marginTop: 4 }}
+                  allowFontScaling={true}
+                >
+                  No football pitches are currently listed in this area.
+                </Text>
+              </Card>
+            ) : (
+              pitches.map((p) => (
+                <PitchCard
+                  key={p.id}
+                  pitch={p}
+                  userLat={user?.lat}
+                  userLng={user?.lng}
+                  onPress={() => setSelectedPitch(p)}
+                />
+              ))
+            )}
           </View>
         )}
 
-        {/* Pitch Detail & Slot Inspector Modal */}
-        <Modal
+        {/* Pitch Detail & Exact Inventory Modal */}
+        <PitchDetailModal
+          pitch={selectedPitch}
           visible={!!selectedPitch}
-          animationType="slide"
-          transparent
-          onRequestClose={() => setSelectedPitch(null)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <View>
-                  <Text variant="titleM">{selectedPitch?.name}</Text>
-                  <Text variant="bodySmall" color={colors.textMuted}>
-                    📍 {selectedPitch?.address}, {selectedPitch?.city}
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={() => setSelectedPitch(null)}>
-                  <Icon name="log-out" color={colors.textMuted} size={24} />
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
-                <View style={{ gap: spacing.sm, marginVertical: spacing.sm }}>
-                  <Text variant="overline">Facility Details</Text>
-                  <View style={{ flexDirection: "row", gap: spacing.xs }}>
-                    <Badge label={selectedPitch?.format.replace("_", " ") ?? ""} tone="brand" />
-                    <Badge label={selectedPitch?.surface.replace("_", " ") ?? ""} tone="neutral" />
-                    <Badge
-                      label={`${selectedPitch ? formatPitchPrice(selectedPitch.hourlyRate) : "0 DZD"}/hr`}
-                      tone="win"
-                    />
-                  </View>
-
-                  <Text variant="overline" style={{ marginTop: spacing.sm }}>
-                    Bookable Slots
-                  </Text>
-                  {slotsLoading ? (
-                    <ActivityIndicator color={colors.primaryContainer} />
-                  ) : !slots || slots.length === 0 ? (
-                    <Text variant="caption" color={colors.textMuted}>
-                      No configured availability slots for this pitch yet.
-                    </Text>
-                  ) : (
-                    <View style={styles.slotGrid}>
-                      {slots.map((s) => (
-                        <View key={s.id} style={styles.slotChip}>
-                          <Text variant="caption" color={colors.primaryContainer}>
-                            {DAYS[s.dayOfWeek]} {s.startTime}-{s.endTime}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              </ScrollView>
-
-              <Button label="Close" variant="secondary" onPress={() => setSelectedPitch(null)} />
-            </View>
-          </View>
-        </Modal>
+          onClose={() => setSelectedPitch(null)}
+          userLat={user?.lat}
+          userLng={user?.lng}
+        />
 
         <View style={{ height: 80 }} />
       </ScrollView>
@@ -554,47 +514,12 @@ const styles = StyleSheet.create({
   pitchesContainer: {
     gap: spacing.sm,
   },
-  pitchItemCard: {
-    gap: 6,
-  },
-  pitchItemTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  pitchesLoading: {
+    paddingVertical: spacing.xl,
     alignItems: "center",
   },
-  badgeRow: {
-    flexDirection: "row",
-    gap: 6,
-    marginTop: 4,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.75)",
-    justifyContent: "flex-end",
-  },
-  modalContent: {
-    backgroundColor: colors.surfaceContainerHigh,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: spacing.gutter,
-    gap: spacing.md,
-  },
-  modalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-  },
-  slotGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  slotChip: {
-    backgroundColor: colors.surfaceContainer,
-    borderColor: colors.borderSubtle,
-    borderWidth: 1,
-    borderRadius: radii.sm,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+  emptyPitchesCard: {
+    padding: spacing.xl,
+    alignItems: "center",
   },
 });
