@@ -4,6 +4,7 @@ import { createApp } from "../../app";
 import { prisma } from "../../lib/prisma";
 import {
   authHeader,
+  createTestUserWithRoles,
   disconnectTestDependencies,
   registerTestUser,
   uniqueEmail,
@@ -13,27 +14,44 @@ const app = createApp();
 const ownerEmail = uniqueEmail("pitch_owner");
 const playerEmail = uniqueEmail("pitch_player");
 const otherOwnerEmail = uniqueEmail("other_pitch_owner");
+const adminEmail = uniqueEmail("pitch_admin");
 const password = "password123";
 
 let ownerToken = "";
 let playerToken = "";
 let otherOwnerToken = "";
+let adminToken = "";
 let ownerId = "";
 
 beforeAll(async () => {
-  const owner = await registerTestUser(app, { email: ownerEmail, password, displayName: "Owner" });
+  const owner = await createTestUserWithRoles(app, ["PITCH_OWNER"], {
+    email: ownerEmail,
+    password,
+    displayName: "Owner",
+  });
   ownerToken = owner.accessToken;
   ownerId = owner.user.id;
 
-  const player = await registerTestUser(app, { email: playerEmail, password, displayName: "Player" });
+  const player = await registerTestUser(app, {
+    email: playerEmail,
+    password,
+    displayName: "Player",
+  });
   playerToken = player.accessToken;
 
-  const otherOwner = await registerTestUser(app, {
+  const otherOwner = await createTestUserWithRoles(app, ["PITCH_OWNER"], {
     email: otherOwnerEmail,
     password,
     displayName: "Other Owner",
   });
   otherOwnerToken = otherOwner.accessToken;
+
+  const admin = await createTestUserWithRoles(app, ["ADMIN"], {
+    email: adminEmail,
+    password,
+    displayName: "Admin",
+  });
+  adminToken = admin.accessToken;
 });
 
 beforeEach(async () => {
@@ -47,7 +65,9 @@ afterAll(async () => {
   await prisma.pitchAvailabilityRule.deleteMany({});
   await prisma.pitch.deleteMany({});
   await prisma.user.deleteMany({
-    where: { email: { in: [ownerEmail, playerEmail, otherOwnerEmail] } },
+    where: {
+      email: { in: [ownerEmail, playerEmail, otherOwnerEmail, adminEmail] },
+    },
   });
   await disconnectTestDependencies();
 });
@@ -84,7 +104,9 @@ describe("pitches flow (integration - M05-T01)", () => {
       currency: "DZD",
     });
 
-    const dbPitch = await prisma.pitch.findUnique({ where: { id: res.body.id } });
+    const dbPitch = await prisma.pitch.findUnique({
+      where: { id: res.body.id },
+    });
     expect(dbPitch).not.toBeNull();
     expect(dbPitch?.priceAmountMinor).toBe(400000);
     expect(dbPitch?.currency).toBe("DZD");
@@ -211,8 +233,12 @@ describe("pitches flow (integration - M05-T01)", () => {
       .query({ maxPriceMinor: 500000 });
 
     expect(resUnder5k.status).toBe(200);
-    expect(resUnder5k.body.some((p: { id: string }) => p.id === pitchA.id)).toBe(true);
-    expect(resUnder5k.body.some((p: { id: string }) => p.id === pitchB.id)).toBe(false);
+    expect(
+      resUnder5k.body.some((p: { id: string }) => p.id === pitchA.id),
+    ).toBe(true);
+    expect(
+      resUnder5k.body.some((p: { id: string }) => p.id === pitchB.id),
+    ).toBe(false);
 
     const resFormat = await request(app)
       .get("/api/v1/pitches")
@@ -253,7 +279,9 @@ describe("pitches flow (integration - M05-T01)", () => {
       .query({ lat: 40.4168, lng: -3.7038, radiusKm: 10 });
 
     expect(farRes.status).toBe(200);
-    expect(farRes.body.find((p: { id: string }) => p.id === algiersPitch.id)).toBeUndefined();
+    expect(
+      farRes.body.find((p: { id: string }) => p.id === algiersPitch.id),
+    ).toBeUndefined();
   });
 
   it("fetches single pitch details with availability rules", async () => {
@@ -348,7 +376,12 @@ describe("pitches availability rules (integration - M05-T02)", () => {
       .send({
         rules: [
           { dayOfWeek: 0, startMinute: 540, endMinute: 720, isActive: true }, // Sunday 09:00 - 12:00
-          { dayOfWeek: 1, startTime: "18:00", endTime: "21:00", isActive: true }, // Monday 18:00 - 21:00 (1080 - 1260)
+          {
+            dayOfWeek: 1,
+            startTime: "18:00",
+            endTime: "21:00",
+            isActive: true,
+          }, // Monday 18:00 - 21:00 (1080 - 1260)
           { dayOfWeek: 5, startMinute: 840, endMinute: 1320, isActive: false }, // Friday 14:00 - 22:00 inactive
         ],
       });
@@ -386,7 +419,9 @@ describe("pitches availability rules (integration - M05-T02)", () => {
     expect(r2.isActive).toBe(false);
 
     // Verify GET returns identical structure
-    const getRes = await request(app).get(`/api/v1/pitches/${testPitchId}/availability-rules`);
+    const getRes = await request(app).get(
+      `/api/v1/pitches/${testPitchId}/availability-rules`,
+    );
     expect(getRes.status).toBe(200);
     expect(getRes.body).toHaveLength(3);
     expect(getRes.body).toEqual(putRes.body);
@@ -410,7 +445,9 @@ describe("pitches availability rules (integration - M05-T02)", () => {
         ],
       });
 
-    const get1 = await request(app).get(`/api/v1/pitches/${testPitchId}/availability-rules`);
+    const get1 = await request(app).get(
+      `/api/v1/pitches/${testPitchId}/availability-rules`,
+    );
     expect(get1.body).toHaveLength(2);
 
     // 2. Second PUT: 1 rule (should replace, not append)
@@ -425,7 +462,9 @@ describe("pitches availability rules (integration - M05-T02)", () => {
     expect(put2.body).toHaveLength(1);
     expect(put2.body[0].dayOfWeek).toBe(3);
 
-    const get2 = await request(app).get(`/api/v1/pitches/${testPitchId}/availability-rules`);
+    const get2 = await request(app).get(
+      `/api/v1/pitches/${testPitchId}/availability-rules`,
+    );
     expect(get2.body).toHaveLength(1);
     expect(get2.body[0].dayOfWeek).toBe(3);
   });
@@ -532,7 +571,9 @@ describe("pitches availability rules (integration - M05-T02)", () => {
       });
     expect(badRes.status).toBe(400);
 
-    const checkRes = await request(app).get(`/api/v1/pitches/${testPitchId}/availability-rules`);
+    const checkRes = await request(app).get(
+      `/api/v1/pitches/${testPitchId}/availability-rules`,
+    );
     expect(checkRes.body).toHaveLength(1);
     expect(checkRes.body[0].dayOfWeek).toBe(1);
   });
@@ -543,8 +584,18 @@ describe("pitches availability rules (integration - M05-T02)", () => {
       .set(authHeader(ownerToken))
       .send({
         slots: [
-          { dayOfWeek: 2, startTime: "18:00", endTime: "19:00", isBookable: true },
-          { dayOfWeek: 2, startTime: "19:00", endTime: "20:00", isBookable: true },
+          {
+            dayOfWeek: 2,
+            startTime: "18:00",
+            endTime: "19:00",
+            isBookable: true,
+          },
+          {
+            dayOfWeek: 2,
+            startTime: "19:00",
+            endTime: "20:00",
+            isBookable: true,
+          },
         ],
       });
 
@@ -553,7 +604,9 @@ describe("pitches availability rules (integration - M05-T02)", () => {
     expect(postRes.body[0].startTime).toBe("18:00");
     expect(postRes.body[0].endTime).toBe("19:00");
 
-    const getSlotsRes = await request(app).get(`/api/v1/pitches/${testPitchId}/slots`);
+    const getSlotsRes = await request(app).get(
+      `/api/v1/pitches/${testPitchId}/slots`,
+    );
     expect(getSlotsRes.status).toBe(200);
     expect(getSlotsRes.body).toHaveLength(2);
   });
@@ -661,7 +714,9 @@ describe("pitch blocks and available slots (integration - M05-T03)", () => {
       .set(authHeader(ownerToken));
     expect(ownerRes.status).toBe(204);
 
-    const dbBlock = await prisma.pitchBlock.findUnique({ where: { id: block.id } });
+    const dbBlock = await prisma.pitchBlock.findUnique({
+      where: { id: block.id },
+    });
     expect(dbBlock?.cancelledAt).not.toBeNull();
   });
 
@@ -678,7 +733,10 @@ describe("pitch blocks and available slots (integration - M05-T03)", () => {
     expect(initialRes.status).toBe(200);
     expect(initialRes.body).toHaveLength(3);
     expect(initialRes.body[0].startAt).toBe("2026-08-21T08:00:00.000Z");
-    expect(initialRes.body[0].price).toEqual({ amountMinor: 400000, currency: "DZD" });
+    expect(initialRes.body[0].price).toEqual({
+      amountMinor: 400000,
+      currency: "DZD",
+    });
 
     // 2. Owner blocks the middle slot (09:00-10:00 UTC)
     const blockRes = await request(app)
@@ -763,5 +821,317 @@ describe("pitch blocks and available slots (integration - M05-T03)", () => {
         durationMinutes: 240,
       });
     expect(durationLong.status).toBe(400);
+  });
+});
+
+describe("pitch-owner role and ownership enforcement (integration - M05-T04)", () => {
+  let targetPitchId = "";
+
+  beforeEach(async () => {
+    const pitch = await prisma.pitch.create({
+      data: {
+        ownerId,
+        name: "Authorized Home Pitch",
+        address: "123 El Biar Boulevard",
+        city: "Algiers",
+        lat: 36.77,
+        lng: 3.03,
+        surface: "ARTIFICIAL_TURF",
+        size: "SEVEN_A_SIDE",
+        priceAmountMinor: 400000,
+        currency: "DZD",
+        isActive: true,
+      },
+    });
+    targetPitchId = pitch.id;
+
+    await prisma.pitchAvailabilityRule.create({
+      data: {
+        pitchId: targetPitchId,
+        dayOfWeek: 1, // Monday
+        startMinute: 600,
+        endMinute: 720,
+        timezone: "Africa/Algiers",
+        isActive: true,
+      },
+    });
+  });
+
+  type Operation =
+    | "create"
+    | "update"
+    | "rule replacement"
+    | "block creation"
+    | "owner listing";
+
+  interface MatrixTestCase {
+    persona:
+      | "anonymous"
+      | "PLAYER"
+      | "unrelated PITCH_OWNER"
+      | "owning PITCH_OWNER"
+      | "ADMIN";
+    operation: Operation;
+    expectedStatus: number;
+  }
+
+  // Table-driven 5 personas x 5 operations = 25 test cases
+  const testMatrix: MatrixTestCase[] = [
+    // 1. anonymous (no auth header)
+    { persona: "anonymous", operation: "create", expectedStatus: 401 },
+    { persona: "anonymous", operation: "update", expectedStatus: 401 },
+    {
+      persona: "anonymous",
+      operation: "rule replacement",
+      expectedStatus: 401,
+    },
+    { persona: "anonymous", operation: "block creation", expectedStatus: 401 },
+    { persona: "anonymous", operation: "owner listing", expectedStatus: 401 },
+
+    // 2. PLAYER (token with role PLAYER)
+    { persona: "PLAYER", operation: "create", expectedStatus: 403 },
+    { persona: "PLAYER", operation: "update", expectedStatus: 403 },
+    { persona: "PLAYER", operation: "rule replacement", expectedStatus: 403 },
+    { persona: "PLAYER", operation: "block creation", expectedStatus: 403 },
+    { persona: "PLAYER", operation: "owner listing", expectedStatus: 403 },
+
+    // 3. unrelated PITCH_OWNER (token with role PITCH_OWNER, but not the pitch owner)
+    {
+      persona: "unrelated PITCH_OWNER",
+      operation: "create",
+      expectedStatus: 201,
+    },
+    {
+      persona: "unrelated PITCH_OWNER",
+      operation: "update",
+      expectedStatus: 403,
+    },
+    {
+      persona: "unrelated PITCH_OWNER",
+      operation: "rule replacement",
+      expectedStatus: 403,
+    },
+    {
+      persona: "unrelated PITCH_OWNER",
+      operation: "block creation",
+      expectedStatus: 403,
+    },
+    {
+      persona: "unrelated PITCH_OWNER",
+      operation: "owner listing",
+      expectedStatus: 200,
+    },
+
+    // 4. owning PITCH_OWNER (token with role PITCH_OWNER, is the pitch owner)
+    { persona: "owning PITCH_OWNER", operation: "create", expectedStatus: 201 },
+    { persona: "owning PITCH_OWNER", operation: "update", expectedStatus: 200 },
+    {
+      persona: "owning PITCH_OWNER",
+      operation: "rule replacement",
+      expectedStatus: 200,
+    },
+    {
+      persona: "owning PITCH_OWNER",
+      operation: "block creation",
+      expectedStatus: 201,
+    },
+    {
+      persona: "owning PITCH_OWNER",
+      operation: "owner listing",
+      expectedStatus: 200,
+    },
+
+    // 5. ADMIN (token with role ADMIN, may inspect but may not edit an owner's commercial data)
+    { persona: "ADMIN", operation: "create", expectedStatus: 201 },
+    { persona: "ADMIN", operation: "update", expectedStatus: 403 },
+    { persona: "ADMIN", operation: "rule replacement", expectedStatus: 403 },
+    { persona: "ADMIN", operation: "block creation", expectedStatus: 403 },
+    { persona: "ADMIN", operation: "owner listing", expectedStatus: 200 },
+  ];
+
+  function getTokenForPersona(
+    persona: MatrixTestCase["persona"],
+  ): string | null {
+    switch (persona) {
+      case "anonymous":
+        return null;
+      case "PLAYER":
+        return playerToken;
+      case "unrelated PITCH_OWNER":
+        return otherOwnerToken;
+      case "owning PITCH_OWNER":
+        return ownerToken;
+      case "ADMIN":
+        return adminToken;
+    }
+  }
+
+  it.each(testMatrix)(
+    "evaluates authorization for $persona attempting $operation -> expected $expectedStatus",
+    async ({ persona, operation, expectedStatus }) => {
+      const token = getTokenForPersona(persona);
+
+      let req: request.Test;
+      switch (operation) {
+        case "create":
+          req = request(app)
+            .post("/api/v1/pitches")
+            .send({
+              name: `Matrix Test Pitch by ${persona}`,
+              address: "123 Matrix Rd",
+              city: "Algiers",
+              lat: 36.75,
+              lng: 3.05,
+              surface: "ARTIFICIAL_TURF",
+              format: "SEVEN_A_SIDE",
+              hourlyRate: { amountMinor: 400000, currency: "DZD" },
+            });
+          break;
+
+        case "update":
+          req = request(app)
+            .patch(`/api/v1/pitches/${targetPitchId}`)
+            .send({ name: `Patched by ${persona}` });
+          break;
+
+        case "rule replacement":
+          req = request(app)
+            .put(`/api/v1/pitches/${targetPitchId}/availability-rules`)
+            .send({
+              rules: [
+                {
+                  dayOfWeek: 2,
+                  startMinute: 600,
+                  endMinute: 720,
+                  isActive: true,
+                },
+              ],
+            });
+          break;
+
+        case "block creation":
+          req = request(app)
+            .post(`/api/v1/pitches/${targetPitchId}/blocks`)
+            .send({
+              startAt: "2026-08-25T14:00:00.000Z",
+              endAt: "2026-08-25T16:00:00.000Z",
+              reason: `Closure by ${persona}`,
+            });
+          break;
+
+        case "owner listing":
+          req = request(app).get("/api/v1/pitches/mine");
+          break;
+      }
+
+      if (token) {
+        req = req.set(authHeader(token));
+      }
+
+      const res = await req;
+      expect(res.status).toBe(expectedStatus);
+
+      // Verify owner listing returns accurate data when successful
+      if (operation === "owner listing" && expectedStatus === 200) {
+        expect(Array.isArray(res.body)).toBe(true);
+        if (persona === "owning PITCH_OWNER") {
+          expect(
+            res.body.some((p: { id: string }) => p.id === targetPitchId),
+          ).toBe(true);
+        } else if (persona === "unrelated PITCH_OWNER") {
+          expect(
+            res.body.some((p: { id: string }) => p.id === targetPitchId),
+          ).toBe(false);
+        }
+      }
+    },
+  );
+
+  it("keeps public search, detail, and inventory readable without authentication and exposes no owner email", async () => {
+    // 1. Search (GET /api/v1/pitches)
+    const searchRes = await request(app).get("/api/v1/pitches");
+    expect(searchRes.status).toBe(200);
+    expect(Array.isArray(searchRes.body)).toBe(true);
+    expect(searchRes.body.length).toBeGreaterThan(0);
+    for (const pitch of searchRes.body) {
+      expect(pitch).not.toHaveProperty("email");
+      expect(pitch).not.toHaveProperty("ownerEmail");
+      expect(pitch).toHaveProperty("ownerId");
+    }
+    expect(JSON.stringify(searchRes.body)).not.toContain(ownerEmail);
+
+    // 2. Detail (GET /api/v1/pitches/:id)
+    const detailRes = await request(app).get(
+      `/api/v1/pitches/${targetPitchId}`,
+    );
+    expect(detailRes.status).toBe(200);
+    expect(detailRes.body.id).toBe(targetPitchId);
+    expect(detailRes.body).not.toHaveProperty("email");
+    expect(detailRes.body).not.toHaveProperty("ownerEmail");
+    expect(detailRes.body).toHaveProperty("ownerId");
+    expect(JSON.stringify(detailRes.body)).not.toContain(ownerEmail);
+
+    // 3. Inventory (GET /api/v1/pitches/:id/available-slots)
+    const inventoryRes = await request(app)
+      .get(`/api/v1/pitches/${targetPitchId}/available-slots`)
+      .query({
+        from: "2026-08-24T00:00:00.000Z", // Monday in August 2026
+        to: "2026-08-24T23:59:59.999Z",
+        durationMinutes: 60,
+      });
+    expect(inventoryRes.status).toBe(200);
+    expect(Array.isArray(inventoryRes.body)).toBe(true);
+    expect(inventoryRes.body.length).toBeGreaterThan(0);
+    for (const slot of inventoryRes.body) {
+      expect(slot).not.toHaveProperty("email");
+      expect(slot).not.toHaveProperty("ownerEmail");
+    }
+    expect(JSON.stringify(inventoryRes.body)).not.toContain(ownerEmail);
+  });
+
+  it("does not allow public registration to self-select PITCH_OWNER or ADMIN", async () => {
+    const maliciousPitchOwnerEmail = uniqueEmail("malicious_owner");
+    const maliciousAdminEmail = uniqueEmail("malicious_admin");
+
+    // Attempt to self-select PITCH_OWNER
+    const regPitchOwnerRes = await request(app)
+      .post("/api/v1/auth/register")
+      .send({
+        email: maliciousPitchOwnerEmail,
+        password: "password123",
+        displayName: "Malicious Owner",
+        roles: ["PITCH_OWNER"],
+      });
+
+    expect(regPitchOwnerRes.status).toBe(201);
+    expect(regPitchOwnerRes.body.user.roles).toEqual(["PLAYER"]);
+
+    const dbUserPitchOwner = await prisma.user.findUnique({
+      where: { email: maliciousPitchOwnerEmail },
+    });
+    expect(dbUserPitchOwner?.roles).toEqual(["PLAYER"]);
+
+    // Attempt to self-select ADMIN
+    const regAdminRes = await request(app)
+      .post("/api/v1/auth/register")
+      .send({
+        email: maliciousAdminEmail,
+        password: "password123",
+        displayName: "Malicious Admin",
+        roles: ["ADMIN"],
+      });
+
+    expect(regAdminRes.status).toBe(201);
+    expect(regAdminRes.body.user.roles).toEqual(["PLAYER"]);
+
+    const dbUserAdmin = await prisma.user.findUnique({
+      where: { email: maliciousAdminEmail },
+    });
+    expect(dbUserAdmin?.roles).toEqual(["PLAYER"]);
+
+    // Clean up test users
+    await prisma.user.deleteMany({
+      where: { email: { in: [maliciousPitchOwnerEmail, maliciousAdminEmail] } },
+    });
   });
 });
