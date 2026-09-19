@@ -56,6 +56,22 @@ export function findMyPitches(ownerId: string): Promise<PitchWithRulesAndBlocks[
   });
 }
 
+/**
+ * Computes a bounding box (minLat, maxLat, minLng, maxLng) in degrees for PostgreSQL index filtering.
+ * 1 degree latitude ≈ 111.045 km
+ */
+export function computeBoundingBox(lat: number, lng: number, radiusKm: number) {
+  const latDelta = radiusKm / 111.045;
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  const lngDelta = cosLat > 0.0001 ? radiusKm / (111.045 * cosLat) : radiusKm / 111.045;
+  return {
+    minLat: lat - latDelta,
+    maxLat: lat + latDelta,
+    minLng: lng - lngDelta,
+    maxLng: lng + lngDelta,
+  };
+}
+
 export async function findPitches(query: PitchQuery): Promise<PitchWithRulesAndBlocks[]> {
   const where: Prisma.PitchWhereInput = {
     isActive: true,
@@ -74,6 +90,19 @@ export async function findPitches(query: PitchQuery): Promise<PitchWithRulesAndB
   const maxPriceMinor = query.maxPriceMinor ?? query.maxPrice;
   if (maxPriceMinor !== undefined) {
     where.priceAmountMinor = { lte: maxPriceMinor };
+  }
+
+  // If lat/lng provided, apply bounding box in database query to avoid reading all rows
+  if (query.lat !== undefined && query.lng !== undefined && query.radiusKm) {
+    const bbox = computeBoundingBox(query.lat, query.lng, query.radiusKm);
+    where.lat = {
+      gte: bbox.minLat,
+      lte: bbox.maxLat,
+    };
+    where.lng = {
+      gte: bbox.minLng,
+      lte: bbox.maxLng,
+    };
   }
 
   const pitches = await prisma.pitch.findMany({

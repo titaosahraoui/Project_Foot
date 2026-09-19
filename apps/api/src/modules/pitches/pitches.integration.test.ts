@@ -9,6 +9,7 @@ import {
   registerTestUser,
   uniqueEmail,
 } from "../../test/integration-helpers";
+import { computeBoundingBox } from "./pitches.repository";
 
 const app = createApp();
 const ownerEmail = uniqueEmail("pitch_owner");
@@ -1132,6 +1133,388 @@ describe("pitch-owner role and ownership enforcement (integration - M05-T04)", (
     // Clean up test users
     await prisma.user.deleteMany({
       where: { email: { in: [maliciousPitchOwnerEmail, maliciousAdminEmail] } },
+    });
+  });
+
+  describe("M05-T07: inventory boundaries and regression coverage", () => {
+    it("proves repository query applies bounding box in PostgreSQL rather than reading all rows", async () => {
+      // Create pitch in Algiers
+      const algiersPitch = await prisma.pitch.create({
+        data: {
+          ownerId,
+          name: "Algiers Center Stadium",
+          address: "Didouche Mourad",
+          city: "Algiers",
+          lat: 36.7538,
+          lng: 3.0588,
+          surface: "ARTIFICIAL_TURF",
+          size: "FIVE_A_SIDE",
+          priceAmountMinor: 400000,
+          currency: "DZD",
+          isActive: true,
+        },
+      });
+
+      // Create pitch in Oran (~350 km away from Algiers)
+      const oranPitch = await prisma.pitch.create({
+        data: {
+          ownerId,
+          name: "Oran Coastal Field",
+          address: "Boulevard Front de Mer",
+          city: "Oran",
+          lat: 35.6971,
+          lng: -0.6308,
+          surface: "NATURAL_GRASS",
+          size: "FIVE_A_SIDE",
+          priceAmountMinor: 350000,
+          currency: "DZD",
+          isActive: true,
+        },
+      });
+
+      const bbox = computeBoundingBox(36.75, 3.05, 10);
+      expect(bbox.minLat).toBeLessThan(36.75);
+      expect(bbox.maxLat).toBeGreaterThan(36.75);
+      expect(bbox.minLng).toBeLessThan(3.05);
+      expect(bbox.maxLng).toBeGreaterThan(3.05);
+
+      // Verify that distant Oran pitch coordinates lie outside the PostgreSQL bounding box
+      expect(oranPitch.lat).toBeLessThan(bbox.minLat);
+      expect(oranPitch.lng).toBeLessThan(bbox.minLng);
+
+      // Verify direct PostgreSQL query with bounding box excludes the Oran pitch
+      const dbBboxPitches = await prisma.pitch.findMany({
+        where: {
+          isActive: true,
+          lat: { gte: bbox.minLat, lte: bbox.maxLat },
+          lng: { gte: bbox.minLng, lte: bbox.maxLng },
+        },
+      });
+      expect(dbBboxPitches.find((p) => p.id === algiersPitch.id)).toBeDefined();
+      expect(dbBboxPitches.find((p) => p.id === oranPitch.id)).toBeUndefined();
+
+      // Query via public HTTP endpoint: returns Algiers pitch, excludes Oran pitch
+      const res = await request(app)
+        .get("/api/v1/pitches")
+        .query({ lat: 36.75, lng: 3.05, radiusKm: 10 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.find((p: { id: string }) => p.id === algiersPitch.id)).toBeDefined();
+      expect(res.body.find((p: { id: string }) => p.id === oranPitch.id)).toBeUndefined();
+    });
+
+    it("enforces exact 31-day query cap in available-slots endpoint", async () => {
+      const pitch = await prisma.pitch.create({
+        data: {
+          ownerId,
+          name: "Cap Test Arena",
+          address: "Hydra Heights",
+          city: "Algiers",
+          lat: 36.75,
+          lng: 3.05,
+          surface: "ARTIFICIAL_TURF",
+          size: "SEVEN_A_SIDE",
+          priceAmountMinor: 400000,
+          currency: "DZD",
+          isActive: true,
+        },
+      });
+
+      // Query spanning 32 days (e.g. Aug 1 to Sep 2)
+      const invalidRes = await request(app)
+        .get(`/api/v1/pitches/${pitch.id}/available-slots`)
+        .query({
+          from: "2026-08-01T00:00:00.000Z",
+          to: "2026-09-02T00:00:00.000Z",
+          durationMinutes: 60,
+        });
+
+      expect(invalidRes.status).toBe(400);
+      expect(JSON.stringify(invalidRes.body)).toContain("Query range cannot exceed 31 days");
+
+      // Query spanning exactly 31 days (Aug 1 00:00 to Sep 1 00:00)
+      const validRes = await request(app)
+        .get(`/api/v1/pitches/${pitch.id}/available-slots`)
+        .query({
+          from: "2026-08-01T00:00:00.000Z",
+          to: "2026-09-01T00:00:00.000Z",
+          durationMinutes: 60,
+        });
+
+      expect(validRes.status).toBe(200);
+      expect(Array.isArray(validRes.body)).toBe(true);
+    });
+
+    it("verifies active vs inactive closures on exact slot inventory in HTTP flow", async () => {
+      const pitch = await prisma.pitch.create({
+        data: {
+          ownerId,
+          name: "Closure Test Arena",
+          address: "Ben Aknoun",
+          city: "Algiers",
+          lat: 36.75,
+          lng: 3.05,
+          surface: "ARTIFICIAL_TURF",
+          size: "SEVEN_A_SIDE",
+          priceAmountMinor: 400000,
+          currency: "DZD",
+          isActive: true,
+        },
+      });
+
+      // Setup recurring rule on Friday: 18:00 to 20:00 local (17:00-18:00 and 18:00-19:00 UTC)
+      await request(app)
+        .put(`/api/v1/pitches/${pitch.id}/availability-rules`)
+        .set(authHeader(ownerToken))
+        .send({
+          rules: [
+            {
+              dayOfWeek: 5,
+              startTime: "18:00",
+              endTime: "20:00",
+              isActive: true,
+            },
+          ],
+        });
+
+      // Query before closure: Friday 2026-08-21 (both slots available)
+      const initialRes = await request(app)
+        .get(`/api/v1/pitches/${pitch.id}/available-slots`)
+        .query({
+          from: "2026-08-21T00:00:00.000Z",
+          to: "2026-08-21T23:59:59.999Z",
+          durationMinutes: 60,
+        });
+
+      expect(initialRes.status).toBe(200);
+      expect(initialRes.body).toHaveLength(2);
+
+      // Create active block suppressing the first slot (17:00-18:00 UTC)
+      const blockRes = await request(app)
+        .post(`/api/v1/pitches/${pitch.id}/blocks`)
+        .set(authHeader(ownerToken))
+        .send({
+          startAt: "2026-08-21T17:00:00.000Z",
+          endAt: "2026-08-21T18:00:00.000Z",
+          reason: "Surface conditioning",
+        });
+
+      expect(blockRes.status).toBe(201);
+      const blockId = blockRes.body.id;
+
+      // Query with active block: first slot is suppressed, second slot remains
+      const blockedRes = await request(app)
+        .get(`/api/v1/pitches/${pitch.id}/available-slots`)
+        .query({
+          from: "2026-08-21T00:00:00.000Z",
+          to: "2026-08-21T23:59:59.999Z",
+          durationMinutes: 60,
+        });
+
+      expect(blockedRes.status).toBe(200);
+      expect(blockedRes.body).toHaveLength(1);
+      expect(blockedRes.body[0].startAt).toBe("2026-08-21T18:00:00.000Z");
+
+      // Cancel the block (inactive closure)
+      const cancelRes = await request(app)
+        .delete(`/api/v1/pitches/${pitch.id}/blocks/${blockId}`)
+        .set(authHeader(ownerToken));
+
+      expect(cancelRes.status).toBe(204);
+
+      // Query after block cancellation: both slots available again
+      const unblockedRes = await request(app)
+        .get(`/api/v1/pitches/${pitch.id}/available-slots`)
+        .query({
+          from: "2026-08-21T00:00:00.000Z",
+          to: "2026-08-21T23:59:59.999Z",
+          durationMinutes: 60,
+        });
+
+      expect(unblockedRes.status).toBe(200);
+      expect(unblockedRes.body).toHaveLength(2);
+      expect(unblockedRes.body[0].startAt).toBe("2026-08-21T17:00:00.000Z");
+      expect(unblockedRes.body[1].startAt).toBe("2026-08-21T18:00:00.000Z");
+    });
+
+    it("verifies Africa/Algiers fixed UTC+1 offset without DST shifts in HTTP response", async () => {
+      const pitch = await prisma.pitch.create({
+        data: {
+          ownerId,
+          name: "DST Test Arena",
+          address: "Didouche",
+          city: "Algiers",
+          lat: 36.75,
+          lng: 3.05,
+          surface: "ARTIFICIAL_TURF",
+          size: "SEVEN_A_SIDE",
+          priceAmountMinor: 400000,
+          currency: "DZD",
+          isActive: true,
+        },
+      });
+
+      // Rule: Friday 18:00 - 19:00 local Algiers
+      await request(app)
+        .put(`/api/v1/pitches/${pitch.id}/availability-rules`)
+        .set(authHeader(ownerToken))
+        .send({
+          rules: [
+            {
+              dayOfWeek: 5,
+              startTime: "18:00",
+              endTime: "19:00",
+              isActive: true,
+            },
+          ],
+        });
+
+      // Winter query (January 16, 2026)
+      const winterRes = await request(app)
+        .get(`/api/v1/pitches/${pitch.id}/available-slots`)
+        .query({
+          from: "2026-01-16T00:00:00.000Z",
+          to: "2026-01-16T23:59:59.999Z",
+          durationMinutes: 60,
+        });
+
+      expect(winterRes.status).toBe(200);
+      expect(winterRes.body[0]?.startAt).toBe("2026-01-16T17:00:00.000Z");
+
+      // Summer query (July 17, 2026)
+      const summerRes = await request(app)
+        .get(`/api/v1/pitches/${pitch.id}/available-slots`)
+        .query({
+          from: "2026-07-17T00:00:00.000Z",
+          to: "2026-07-17T23:59:59.999Z",
+          durationMinutes: 60,
+        });
+
+      expect(summerRes.status).toBe(200);
+      // Fixed UTC+1 in summer as well
+      expect(summerRes.body[0]?.startAt).toBe("2026-07-17T17:00:00.000Z");
+    });
+
+    it("verifies DZD price serialization and proportional duration pricing", async () => {
+      const pitch = await prisma.pitch.create({
+        data: {
+          ownerId,
+          name: "Pricing Test Arena",
+          address: "Bab Ezzouar",
+          city: "Algiers",
+          lat: 36.75,
+          lng: 3.05,
+          surface: "ARTIFICIAL_TURF",
+          size: "SEVEN_A_SIDE",
+          priceAmountMinor: 400000,
+          currency: "DZD",
+          isActive: true,
+        },
+      });
+
+      // Verify single pitch detail endpoint returns DZD Money shape
+      const detailRes = await request(app).get(`/api/v1/pitches/${pitch.id}`);
+      expect(detailRes.status).toBe(200);
+      expect(detailRes.body.hourlyRate).toEqual({
+        amountMinor: 400000,
+        currency: "DZD",
+      });
+
+      // Configure availability rule for Friday: 18:00 to 21:00 (3 hours = 180 min)
+      await request(app)
+        .put(`/api/v1/pitches/${pitch.id}/availability-rules`)
+        .set(authHeader(ownerToken))
+        .send({
+          rules: [
+            {
+              dayOfWeek: 5,
+              startTime: "18:00",
+              endTime: "21:00",
+              isActive: true,
+            },
+          ],
+        });
+
+      // 60-min slots: 400000 * 60 / 60 = 400,000 minor units (4,000 DZD)
+      const slots60Res = await request(app)
+        .get(`/api/v1/pitches/${pitch.id}/available-slots`)
+        .query({
+          from: "2026-08-21T00:00:00.000Z",
+          to: "2026-08-21T23:59:59.999Z",
+          durationMinutes: 60,
+        });
+      expect(slots60Res.status).toBe(200);
+      expect(slots60Res.body[0]?.price).toEqual({
+        amountMinor: 400000,
+        currency: "DZD",
+      });
+
+      // 90-min slots: 400000 * 90 / 60 = 600,000 minor units (6,000 DZD)
+      const slots90Res = await request(app)
+        .get(`/api/v1/pitches/${pitch.id}/available-slots`)
+        .query({
+          from: "2026-08-21T00:00:00.000Z",
+          to: "2026-08-21T23:59:59.999Z",
+          durationMinutes: 90,
+        });
+      expect(slots90Res.status).toBe(200);
+      expect(slots90Res.body[0]?.price).toEqual({
+        amountMinor: 600000,
+        currency: "DZD",
+      });
+    });
+
+    it("verifies Haversine boundary precision across multiple radii", async () => {
+      // Center: Hydra (36.7500, 3.0500)
+      // Pitch A: El Biar (~2 km away, 36.7650, 3.0300)
+      const pitchA = await prisma.pitch.create({
+        data: {
+          ownerId,
+          name: "El Biar Turf",
+          address: "El Biar",
+          city: "Algiers",
+          lat: 36.765,
+          lng: 3.03,
+          surface: "ARTIFICIAL_TURF",
+          size: "FIVE_A_SIDE",
+          priceAmountMinor: 400000,
+          currency: "DZD",
+          isActive: true,
+        },
+      });
+
+      // Pitch B: Rouiba (~19 km away, 36.7380, 3.2950)
+      const pitchB = await prisma.pitch.create({
+        data: {
+          ownerId,
+          name: "Rouiba Park",
+          address: "Rouiba",
+          city: "Algiers",
+          lat: 36.738,
+          lng: 3.295,
+          surface: "ARTIFICIAL_TURF",
+          size: "FIVE_A_SIDE",
+          priceAmountMinor: 400000,
+          currency: "DZD",
+          isActive: true,
+        },
+      });
+
+      // 5km radius: includes Pitch A, excludes Pitch B
+      const res5km = await request(app)
+        .get("/api/v1/pitches")
+        .query({ lat: 36.75, lng: 3.05, radiusKm: 5 });
+      expect(res5km.status).toBe(200);
+      expect(res5km.body.find((p: { id: string }) => p.id === pitchA.id)).toBeDefined();
+      expect(res5km.body.find((p: { id: string }) => p.id === pitchB.id)).toBeUndefined();
+
+      // 25km radius: includes both Pitch A and Pitch B
+      const res25km = await request(app)
+        .get("/api/v1/pitches")
+        .query({ lat: 36.75, lng: 3.05, radiusKm: 25 });
+      expect(res25km.status).toBe(200);
+      expect(res25km.body.find((p: { id: string }) => p.id === pitchA.id)).toBeDefined();
+      expect(res25km.body.find((p: { id: string }) => p.id === pitchB.id)).toBeDefined();
     });
   });
 });

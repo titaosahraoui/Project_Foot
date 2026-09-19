@@ -153,8 +153,19 @@ export function computeAvailableSlots({
     currentMidnightUTC += ONE_DAY_MS;
   }
 
-  // Preserve chronological ordering
-  slots.sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+  // Deduplicate slots that share the same startAt and endAt (e.g. from overlapping availability rules)
+  const uniqueSlots: AvailableSlot[] = [];
+  const seenSlotKeys = new Set<string>();
+  for (const slot of slots) {
+    const key = `${slot.startAt}__${slot.endAt}`;
+    if (!seenSlotKeys.has(key)) {
+      seenSlotKeys.add(key);
+      uniqueSlots.push(slot);
+    }
+  }
 
-  return slots;
+  // Preserve chronological ordering
+  uniqueSlots.sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+
+  return uniqueSlots;
 }
