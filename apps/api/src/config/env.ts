@@ -8,12 +8,22 @@ config({ path: resolve(process.cwd(), "../../.env") });
 config();
 
 const envSchema = z.object({
-  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
   API_PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z
     .string()
-    .default("postgresql://footconnect:footconnect@localhost:5432/footconnect?schema=public"),
-  REDIS_URL: z.string().default("redis://localhost:6379"),
+    .default(
+      "postgresql://footconnect:footconnect@localhost:5432/footconnect?schema=public",
+    ),
+  UPSTASH_REDIS_REST_URL: z
+    .string()
+    .default("https://loyal-herring-44337.upstash.io"),
+  UPSTASH_REDIS_REST_TOKEN: z
+    .string()
+    .default("Aa0xAAIgcDFjMzA5OTQ0NDc4ZDU0ZmY4YmE2MmFhYzc1ZDlmYzhkMg"),
+  REDIS_URL: z.string().optional(),
 
   // Auth. Defaults let dev/test run out of the box; OVERRIDE these in production.
   JWT_ACCESS_SECRET: z.string().default("dev-access-secret-change-me"),
@@ -23,7 +33,9 @@ const envSchema = z.object({
 
   // CORS / cookies.
   // Comma-separated list of allowed origins (Next dev :3000, Expo web :8081).
-  CORS_ORIGIN: z.string().default("http://localhost:3000,http://localhost:8081"),
+  CORS_ORIGIN: z
+    .string()
+    .default("http://localhost:3000,http://localhost:8081"),
   COOKIE_SECURE: z
     .enum(["true", "false"])
     .default("false")

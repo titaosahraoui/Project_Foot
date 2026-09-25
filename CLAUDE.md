@@ -29,7 +29,7 @@ packages/shared      Zod schemas + inferred types (single source of truth)
 packages/api-client  typed REST client (used by web + mobile)
 packages/ui          design tokens
 packages/config      tsconfig / eslint / prettier presets
-infra/docker-compose.yml   Postgres + Redis
+infra/docker-compose.yml   Postgres
 ```
 
 ## Core architecture rule (modular monolith)
@@ -58,7 +58,7 @@ Zod schemas in `@footconnect/shared` are the single source of truth — imported
 ```bash
 pnpm install                                   # install all workspaces
 cp .env.example .env                            # configure env
-pnpm docker:up                                  # Postgres + Redis
+pnpm docker:up                                  # Postgres (Redis hosted on Upstash)
 pnpm --filter @footconnect/api prisma:migrate   # run migrations
 pnpm dev                                        # run all apps via turbo
 pnpm --filter @footconnect/api dev              # just the API

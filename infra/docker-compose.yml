@@ -13,24 +13,14 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-footconnect} -d ${POSTGRES_DB:-footconnect}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-footconnect} -d ${POSTGRES_DB:-footconnect}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
 
 volumes:
   postgres_data:
-  redis_data:

@@ -7,7 +7,6 @@ import type {
   UserRole,
 } from "@footconnect/shared";
 import { prisma } from "../lib/prisma";
-import { redis } from "../lib/redis";
 
 const defaultPassword = "password123";
 
@@ -83,5 +82,4 @@ export async function createTestUserWithRoles(
 
 export async function disconnectTestDependencies(): Promise<void> {
   await prisma.$disconnect();
-  redis.disconnect();
 }

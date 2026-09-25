@@ -35,7 +35,7 @@ The mobile package currently remains on its checked-in Expo 54, React 19.1, and 
 
 - Node.js 22 or newer
 - pnpm 11 or newer
-- Docker for PostgreSQL and Redis
+- Docker for PostgreSQL (Redis is hosted on Upstash)
 
 ## Getting started
 
@@ -46,7 +46,7 @@ pnpm install
 # Create local configuration
 cp .env.example .env
 
-# Start PostgreSQL and Redis
+# Start PostgreSQL
 pnpm docker:up
 
 # Apply database migrations
@@ -87,7 +87,7 @@ pnpm test
 pnpm --filter @footconnect/api test:integration
 ```
 
-The integration suite requires the local PostgreSQL and Redis services plus an applied migration.
+The integration suite requires the local PostgreSQL service and configured Upstash Redis plus an applied migration.
 
 ## Monorepo layout
 

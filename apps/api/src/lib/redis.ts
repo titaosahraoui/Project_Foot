@@ -1,17 +1,20 @@
-import Redis from "ioredis";
+import { Redis } from "@upstash/redis";
 import { env } from "../config/env";
 
-// Lazy-connecting Redis client so the API can boot even if Redis is briefly down.
-export const redis = new Redis(env.REDIS_URL, {
-  lazyConnect: true,
-  maxRetriesPerRequest: 2,
-});
+export const redis =
+  process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
+    ? Redis.fromEnv()
+    : new Redis({
+        url: env.UPSTASH_REDIS_REST_URL,
+        token: env.UPSTASH_REDIS_REST_TOKEN,
+      });
+
+// Upstash Redis uses stateless HTTP REST and does not hold persistent TCP sockets.
+// Provide a no-op disconnect for backward compatibility with shutdown routines.
+(redis as unknown as { disconnect: () => void }).disconnect = () => undefined;
 
 export async function checkRedis(): Promise<boolean> {
   try {
-    if (redis.status !== "ready") {
-      await redis.connect().catch(() => undefined);
-    }
     const pong = await redis.ping();
     return pong === "PONG";
   } catch {
