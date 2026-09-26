@@ -58,9 +58,8 @@ Integration prerequisites:
 
 ```powershell
 Copy-Item .env.example .env # only when .env does not already exist
-pnpm docker:up
-pnpm --filter @footconnect/api prisma:migrate
-pnpm --filter @footconnect/api test:integration
+pnpm --filter @footconnect/api prisma:migrate # applies migrations to Supabase
+pnpm --filter @footconnect/api test:integration # runs against Supabase & Upstash
 ```
 
 Do not overwrite an existing `.env`.

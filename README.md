@@ -24,7 +24,7 @@ See the [baseline audit](docs/baseline-audit-2026-08-11.md) for exact module and
 ## Stack
 
 - **Monorepo:** Turborepo + pnpm
-- **Backend (`apps/api`):** Express + TypeScript modular monolith, Prisma, PostgreSQL, Redis
+- **Backend (`apps/api`):** Express + TypeScript modular monolith, Prisma, PostgreSQL (Supabase), Redis (Upstash)
 - **Owner dashboard (`apps/web`):** Next.js + TypeScript
 - **Player app (`apps/mobile`):** React Native + Expo
 - **Shared packages (`packages/*`):** Zod contracts, typed API client, configuration, and UI tokens
@@ -35,7 +35,7 @@ The mobile package currently remains on its checked-in Expo 54, React 19.1, and 
 
 - Node.js 22 or newer
 - pnpm 11 or newer
-- Docker for PostgreSQL (Redis is hosted on Upstash)
+- Cloud services: Supabase PostgreSQL and Upstash Redis (Docker is no longer required)
 
 ## Getting started
 
@@ -46,13 +46,10 @@ pnpm install
 # Create local configuration
 cp .env.example .env
 
-# Start PostgreSQL
-pnpm docker:up
-
-# Apply database migrations
+# Apply database migrations to Supabase
 pnpm --filter @footconnect/api prisma:migrate
 
-# Create the three reusable local test accounts
+# Create the three reusable test accounts
 pnpm --filter @footconnect/api prisma:seed
 
 # Start all applications
@@ -87,7 +84,7 @@ pnpm test
 pnpm --filter @footconnect/api test:integration
 ```
 
-The integration suite requires the local PostgreSQL service and configured Upstash Redis plus an applied migration.
+The integration suite requires the configured Supabase PostgreSQL database and Upstash Redis plus applied migrations.
 
 ## Monorepo layout
 
