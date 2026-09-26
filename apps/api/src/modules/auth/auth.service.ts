@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { User } from "@prisma/client";
-import type { AuthResponse, LoginInput, RegisterInput } from "@footconnect/shared";
+import { Prisma, type User } from "@prisma/client";
+import type {
+  AuthResponse,
+  LoginInput,
+  RegisterInput,
+} from "@footconnect/shared";
 import { env } from "../../config/env";
 import {
   signAccessToken,
@@ -14,15 +18,27 @@ import { toAuthUser } from "../users/users.service";
 import * as repo from "./auth.repository";
 
 const refreshTtlSeconds = () => env.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60;
+const refreshExpiresAt = () =>
+  new Date(Date.now() + refreshTtlSeconds() * 1000);
 
-/** Mint a fresh access + refresh token pair, recording the refresh jti in Redis. */
-async function issueTokens(user: User): Promise<{ accessToken: string; refreshToken: string }> {
-  const jti = randomUUID();
-  await repo.storeRefreshJti(jti, user.id, refreshTtlSeconds());
+function createTokenPair(user: User, jti: string) {
   return {
     accessToken: signAccessToken({ userId: user.id, roles: user.roles }),
     refreshToken: signRefreshToken(user.id, jti),
   };
+}
+
+/** Mint a fresh access + refresh token pair with a durable refresh session. */
+async function issueTokens(
+  user: User,
+): Promise<{ accessToken: string; refreshToken: string }> {
+  const jti = randomUUID();
+  await repo.createRefreshSession({
+    jti,
+    userId: user.id,
+    expiresAt: refreshExpiresAt(),
+  });
+  return createTokenPair(user, jti);
 }
 
 export async function register(input: RegisterInput): Promise<AuthResponse> {
@@ -30,13 +46,28 @@ export async function register(input: RegisterInput): Promise<AuthResponse> {
   if (existing) throw new HttpError(409, "Email already registered");
 
   const passwordHash = await hashPassword(input.password);
-  const user = await repo.createUser({
-    email: input.email,
-    passwordHash,
-    displayName: input.displayName,
-  });
+  const jti = randomUUID();
+  let user: User;
+  try {
+    user = await repo.createUserWithRefreshSession({
+      user: {
+        email: input.email,
+        passwordHash,
+        displayName: input.displayName,
+      },
+      session: { jti, expiresAt: refreshExpiresAt() },
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      throw new HttpError(409, "Email already registered");
+    }
+    throw error;
+  }
 
-  const tokens = await issueTokens(user);
+  const tokens = createTokenPair(user, jti);
   return { user: toAuthUser(user), ...tokens };
 }
 
@@ -59,25 +90,32 @@ export async function refresh(token: string): Promise<AuthResponse> {
     throw new HttpError(401, "Invalid refresh token");
   }
 
-  if (!(await repo.isRefreshJtiValid(payload.jti))) {
-    throw new HttpError(401, "Refresh token has been revoked");
-  }
-  // Rotate: the old jti is single-use.
-  await repo.revokeRefreshJti(payload.jti);
-
   const user = await repo.findById(payload.userId);
   if (!user) throw new HttpError(401, "User no longer exists");
 
-  const tokens = await issueTokens(user);
+  const replacementJti = randomUUID();
+  const rotated = await repo.rotateRefreshSession({
+    currentJti: payload.jti,
+    userId: payload.userId,
+    replacementJti,
+    replacementExpiresAt: refreshExpiresAt(),
+  });
+  if (!rotated)
+    throw new HttpError(401, "Refresh token is invalid or has been revoked");
+
+  const tokens = createTokenPair(user, replacementJti);
   return { user: toAuthUser(user), ...tokens };
 }
 
 export async function logout(token: string | undefined): Promise<void> {
   if (!token) return;
+  let payload: RefreshTokenPayload;
   try {
-    const payload = verifyRefreshToken(token);
-    await repo.revokeRefreshJti(payload.jti);
+    payload = verifyRefreshToken(token);
   } catch {
     // Invalid/expired token on logout is a no-op.
+    return;
   }
+
+  await repo.revokeRefreshSession(payload.jti);
 }

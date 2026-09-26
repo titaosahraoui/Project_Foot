@@ -1,8 +1,11 @@
 import type { Request, Response } from "express";
 import {
+  availableSlotQuerySchema,
+  createPitchBlockSchema,
   createPitchSchema,
   createPitchSlotSchema,
   pitchQuerySchema,
+  setPitchAvailabilityRulesSchema,
   updatePitchSchema,
 } from "@footconnect/shared";
 import { z } from "zod";
@@ -36,6 +39,35 @@ export async function updatePitchHandler(req: Request, res: Response): Promise<v
   res.json(pitch);
 }
 
+export async function getAvailabilityRulesHandler(req: Request, res: Response): Promise<void> {
+  const rules = await service.getAvailabilityRules(req.params.id!);
+  res.json(rules);
+}
+
+export async function setAvailabilityRulesHandler(req: Request, res: Response): Promise<void> {
+  const { rules } = setPitchAvailabilityRulesSchema.parse(req.body);
+  const updatedRules = await service.setAvailabilityRules(req.userId!, req.params.id!, rules);
+  res.json(updatedRules);
+}
+
+export async function createPitchBlockHandler(req: Request, res: Response): Promise<void> {
+  const input = createPitchBlockSchema.parse(req.body);
+  const block = await service.createPitchBlock(req.userId!, req.params.id!, input);
+  res.status(201).json(block);
+}
+
+export async function cancelPitchBlockHandler(req: Request, res: Response): Promise<void> {
+  await service.cancelPitchBlock(req.userId!, req.params.id!, req.params.blockId!);
+  res.status(204).send();
+}
+
+export async function getAvailableSlotsHandler(req: Request, res: Response): Promise<void> {
+  const query = availableSlotQuerySchema.parse(req.query);
+  const slots = await service.getAvailableSlots(req.params.id!, query);
+  res.json(slots);
+}
+
+// Deprecated handlers for backwards compatibility
 export async function getPitchSlotsHandler(req: Request, res: Response): Promise<void> {
   const slots = await service.getPitchSlots(req.params.id!);
   res.json(slots);

@@ -6,8 +6,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum UserRole {
@@ -23,6 +24,14 @@ enum SkillLevel {
   PRO
 }
 
+enum PlayerPosition {
+  GK
+  DEF
+  MID
+  FWD
+  FLEX
+}
+
 model User {
   id           String      @id @default(uuid())
   email        String      @unique
@@ -30,7 +39,7 @@ model User {
   displayName  String
   roles        UserRole[]  @default([PLAYER])
   skillLevel   SkillLevel?
-  position     String?
+  position     PlayerPosition?
   lat          Float?
   lng          Float?
   bio          String?
@@ -42,8 +51,24 @@ model User {
   invitationsReceived Invitation[]     @relation("invitee")
   invitationsSent     Invitation[]     @relation("inviter")
   pitches             Pitch[]
+  refreshSessions     RefreshSession[]
 
   @@map("users")
+}
+
+model RefreshSession {
+  jti           String   @id
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  replacedByJti String?
+  createdAt     DateTime @default(now())
+  lastUsedAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_sessions")
 }
 
 enum PitchSurface {
@@ -60,40 +85,60 @@ enum PitchSize {
 }
 
 model Pitch {
-  id           String       @id @default(uuid())
-  ownerId      String
-  owner        User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  name         String
-  description  String?
-  address      String
-  city         String
-  lat          Float
-  lng          Float
-  surface      PitchSurface
-  size         PitchSize
-  pricePerHour Float
-  amenities    String[]     @default([])
-  photos       String[]     @default([])
-  isActive     Boolean      @default(true)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id               String       @id @default(uuid())
+  ownerId          String
+  owner            User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  address          String
+  city             String
+  lat              Float
+  lng              Float
+  surface          PitchSurface
+  size             PitchSize
+  priceAmountMinor Int
+  currency         String       @default("DZD")
+  amenities        String[]     @default([])
+  photos           String[]     @default([])
+  isActive         Boolean      @default(true)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
-  slots        PitchSlot[]
+  availabilityRules PitchAvailabilityRule[]
+  blocks            PitchBlock[]
 
   @@map("pitches")
 }
 
-model PitchSlot {
-  id         String   @id @default(uuid())
-  pitchId    String
-  pitch      Pitch    @relation(fields: [pitchId], references: [id], onDelete: Cascade)
-  dayOfWeek  Int      // 0 = Sunday, 6 = Saturday
-  startTime  String   // "09:00"
-  endTime    String   // "10:00"
-  isBookable Boolean  @default(true)
+model PitchAvailabilityRule {
+  id          String   @id @default(uuid())
+  pitchId     String
+  pitch       Pitch    @relation(fields: [pitchId], references: [id], onDelete: Cascade)
+  dayOfWeek   Int      // 0 = Sunday, 6 = Saturday
+  startMinute Int      // 0..1440
+  endMinute   Int      // 0..1440
+  timezone    String   @default("Africa/Algiers")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  @@unique([pitchId, dayOfWeek, startTime])
-  @@map("pitch_slots")
+  @@index([pitchId, dayOfWeek])
+  @@map("pitch_availability_rules")
+}
+
+model PitchBlock {
+  id          String    @id @default(uuid())
+  pitchId     String
+  pitch       Pitch     @relation(fields: [pitchId], references: [id], onDelete: Cascade)
+  startAt     DateTime
+  endAt       DateTime
+  reason      String?
+  createdById String
+  createdAt   DateTime  @default(now())
+  cancelledAt DateTime?
+
+  @@index([pitchId, startAt, endAt])
+  @@map("pitch_blocks")
 }
 
 enum TeamMemberRole {
@@ -112,22 +157,68 @@ enum InvitationStatus {
   DECLINED
 }
 
+enum TeamStatus {
+  ACTIVE
+  ARCHIVED
+}
+
 model Team {
   id          String           @id @default(uuid())
   name        String
   logoUrl     String?
   lat         Float?
   lng         Float?
-  skillRating Int              @default(1000)
-  wins        Int              @default(0)
-  losses      Int              @default(0)
+  status      TeamStatus       @default(ACTIVE)
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
+  rating      TeamRating?
   members     TeamMembership[]
   invitations Invitation[]
+  lineups     TeamLineup[]
 
   @@map("teams")
+}
+
+model TeamRating {
+  teamId        String   @id
+  team          Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  rating        Int      @default(1000)
+  matchesPlayed Int      @default(0)
+  wins          Int      @default(0)
+  draws         Int      @default(0)
+  losses        Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("team_ratings")
+}
+
+model TeamLineup {
+  id            String           @id @default(uuid())
+  teamId        String
+  team          Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  format        String
+  formationCode String
+  updatedById   String
+  updatedAt     DateTime         @updatedAt
+  slots         TeamLineupSlot[]
+
+  @@unique([teamId, format])
+  @@map("team_lineups")
+}
+
+model TeamLineupSlot {
+  id           String     @id @default(uuid())
+  lineupId     String
+  lineup       TeamLineup @relation(fields: [lineupId], references: [id], onDelete: Cascade)
+  userId       String
+  positionCode String
+  sortOrder    Int
+
+  @@unique([lineupId, sortOrder])
+  @@unique([lineupId, userId])
+  @@map("team_lineup_slots")
 }
 
 model TeamMembership {
@@ -158,4 +249,22 @@ model Invitation {
 
   @@unique([teamId, inviteeId])
   @@map("invitations")
+}
+
+model IdempotencyRecord {
+  id             String   @id @default(uuid())
+  actorId        String
+  scope          String
+  key            String
+  requestHash    String
+  resourceType   String
+  resourceId     String
+  responseStatus Int
+  responseBody   Json
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+
+  @@unique([actorId, scope, key])
+  @@index([expiresAt])
+  @@map("idempotency_records")
 }

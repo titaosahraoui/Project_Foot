@@ -25,3 +25,28 @@ export const coordinatesSchema = z.object({
   lng: z.number().min(-180).max(180),
 });
 export type Coordinates = z.infer<typeof coordinatesSchema>;
+
+/** Stable machine-readable codes returned by the API error boundary. */
+export const apiErrorCodeSchema = z.enum([
+  "VALIDATION_ERROR",
+  "UNAUTHENTICATED",
+  "FORBIDDEN",
+  "NOT_FOUND",
+  "CONFLICT",
+  "STATE_CONFLICT",
+  "INVENTORY_CONFLICT",
+  "CONDITIONS_VIOLATION",
+  "RATE_LIMITED",
+  "INTERNAL_ERROR",
+]);
+export type ApiErrorCode = z.infer<typeof apiErrorCodeSchema>;
+
+/** Canonical response envelope for expected and unexpected API errors. */
+export const apiErrorResponseSchema = z.object({
+  code: apiErrorCodeSchema,
+  message: z.string(),
+  issues: z.array(z.unknown()).optional(),
+  details: z.unknown().optional(),
+  requestId: z.string().optional(),
+});
+export type ApiErrorResponse = z.infer<typeof apiErrorResponseSchema>;

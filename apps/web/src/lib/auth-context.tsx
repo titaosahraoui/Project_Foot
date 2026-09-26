@@ -8,19 +8,23 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { AuthUser, LoginInput } from "@footconnect/shared";
+import type { AuthUser, LoginInput, RegisterInput } from "@footconnect/shared";
+import { useQueryClient } from "@tanstack/react-query";
 import { api, setAccessToken } from "./api";
 
 interface AuthState {
   user: AuthUser | null;
   loading: boolean;
   login: (input: LoginInput) => Promise<void>;
+  register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
+  setUser: (user: AuthUser) => void;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -35,12 +39,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         setAccessToken(null);
         setUser(null);
+        queryClient.clear();
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [queryClient]);
 
   const login = useCallback(async (input: LoginInput) => {
     const res = await api.login(input);
+    setAccessToken(res.accessToken);
+    setUser(res.user);
+  }, []);
+
+  const register = useCallback(async (input: RegisterInput) => {
+    const res = await api.register(input);
     setAccessToken(res.accessToken);
     setUser(res.user);
   }, []);
@@ -49,10 +60,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await api.logout();
     setAccessToken(null);
     setUser(null);
-  }, []);
+    queryClient.clear();
+  }, [queryClient]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, register, logout, setUser }}
+    >
       {children}
     </AuthContext.Provider>
   );

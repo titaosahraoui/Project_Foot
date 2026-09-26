@@ -14,6 +14,9 @@ out/
 # Turbo
 .turbo/
 
+# Local Git worktrees
+.worktrees/
+
 # Environment
 .env
 .env.local
@@ -37,3 +40,6 @@ Thumbs.db
 
 # Coverage
 coverage/
+.aider*
+.antigravity/
+.claude/

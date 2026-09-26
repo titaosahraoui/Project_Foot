@@ -9,7 +9,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import { colors } from "@footconnect/ui";
-import { fontMap } from "./src/theme/fonts";
+import { fontMap, fontFamily } from "./src/theme/fonts";
 import { Icon, type IconName } from "./src/components/ui";
 import { api } from "./src/lib/api";
 import { AuthProvider, useAuth } from "./src/lib/auth-context";
@@ -34,25 +34,25 @@ const Tab = createBottomTabNavigator<TabParamList>();
 const navTheme: NavTheme = {
   dark: true,
   colors: {
-    primary: colors.brand,
+    primary: colors.primaryContainer,
     background: colors.bgBase,
-    card: colors.surface1,
-    text: colors.textPrimary,
+    card: colors.surfaceContainerHigh,
+    text: colors.onSurface,
     border: colors.borderSubtle,
-    notification: colors.brand,
+    notification: colors.primaryContainer,
   },
   fonts: {
-    regular: { fontFamily: "Archivo_400Regular", fontWeight: "400" },
-    medium: { fontFamily: "Archivo_500Medium", fontWeight: "500" },
-    bold: { fontFamily: "Archivo_700Bold", fontWeight: "700" },
-    heavy: { fontFamily: "Archivo_700Bold", fontWeight: "800" },
+    regular: { fontFamily: fontFamily.body, fontWeight: "400" },
+    medium: { fontFamily: fontFamily.bodyMedium, fontWeight: "500" },
+    bold: { fontFamily: fontFamily.headline, fontWeight: "700" },
+    heavy: { fontFamily: fontFamily.display, fontWeight: "800" },
   },
 };
 
 const stackScreenOptions = {
-  headerStyle: { backgroundColor: colors.surface1 },
-  headerTintColor: colors.textPrimary,
-  headerTitleStyle: { fontFamily: "Archivo_700Bold" },
+  headerStyle: { backgroundColor: colors.surfaceContainerHigh },
+  headerTintColor: colors.onSurface,
+  headerTitleStyle: { fontFamily: fontFamily.headline, fontSize: 18, textTransform: "uppercase" as const },
   contentStyle: { backgroundColor: colors.bgBase },
 } as const;
 
@@ -60,8 +60,8 @@ function SquadNavigator() {
   return (
     <SquadStack.Navigator screenOptions={stackScreenOptions}>
       <SquadStack.Screen name="TeamsList" component={TeamsListScreen} options={{ title: "Squads" }} />
-      <SquadStack.Screen name="CreateTeam" component={CreateTeamScreen} options={{ title: "New squad" }} />
-      <SquadStack.Screen name="TeamDetail" component={TeamDetailScreen} options={{ title: "Squad" }} />
+      <SquadStack.Screen name="CreateTeam" component={CreateTeamScreen} options={{ title: "New Squad" }} />
+      <SquadStack.Screen name="TeamDetail" component={TeamDetailScreen} options={{ title: "Squad Tactical" }} />
       <SquadStack.Screen name="Invitations" component={InvitationsScreen} options={{ title: "Invitations" }} />
     </SquadStack.Navigator>
   );
@@ -87,17 +87,34 @@ function Tabs() {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: colors.brand,
-        tabBarInactiveTintColor: colors.textMuted,
+        tabBarActiveTintColor: colors.primaryContainer,
+        tabBarInactiveTintColor: colors.onSurfaceVariant,
         tabBarStyle: {
-          backgroundColor: colors.surface1,
-          borderTopColor: colors.borderSubtle,
-          height: 72,
+          backgroundColor: colors.surfaceContainerHigh,
+          borderTopColor: "rgba(255, 255, 255, 0.08)",
+          height: 74,
           paddingTop: 8,
-          paddingBottom: 12,
+          paddingBottom: 14,
+          borderTopLeftRadius: 16,
+          borderTopRightRadius: 16,
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
         },
-        tabBarLabelStyle: { fontFamily: "Archivo_600SemiBold", fontSize: 11 },
-        tabBarIcon: ({ color }) => <Icon name={tabIcon[route.name]} color={color} size={22} />,
+        tabBarLabelStyle: {
+          fontFamily: fontFamily.headline,
+          fontSize: 12,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
+        },
+        tabBarIcon: ({ color, focused }) => (
+          <Icon
+            name={tabIcon[route.name]}
+            color={color}
+            size={focused ? 24 : 22}
+          />
+        ),
       })}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
@@ -106,7 +123,12 @@ function Tabs() {
         component={SquadNavigator}
         options={{
           tabBarBadge: pendingCount > 0 ? pendingCount : undefined,
-          tabBarBadgeStyle: { backgroundColor: colors.brand, color: colors.surface1, fontSize: 10, fontFamily: "Archivo_700Bold" },
+          tabBarBadgeStyle: {
+            backgroundColor: colors.primaryContainer,
+            color: colors.onPrimary,
+            fontSize: 10,
+            fontFamily: fontFamily.headline,
+          },
         }}
       />
       <Tab.Screen name="Play" component={PlayScreen} />
@@ -120,7 +142,7 @@ function Root() {
   if (loading) {
     return (
       <View style={{ flex: 1, justifyContent: "center", backgroundColor: colors.bgBase }}>
-        <ActivityIndicator color={colors.brand} />
+        <ActivityIndicator color={colors.primaryContainer} size="large" />
       </View>
     );
   }

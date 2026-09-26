@@ -1,11 +1,15 @@
 import type { User } from "@prisma/client";
-import type { AuthUser, UpdateProfileInput } from "@footconnect/shared";
+import {
+  authUserSchema,
+  type AuthUser,
+  type UpdateProfileInput,
+} from "@footconnect/shared";
 import { HttpError } from "../../middleware/error-handler";
 import * as repo from "./users.repository";
 
 /** Map a Prisma User to the public, safe-to-expose shape. Reused by the auth module. */
 export function toAuthUser(u: User): AuthUser {
-  return {
+  return authUserSchema.parse({
     id: u.id,
     email: u.email,
     displayName: u.displayName,
@@ -17,7 +21,7 @@ export function toAuthUser(u: User): AuthUser {
     bio: u.bio,
     avatarUrl: u.avatarUrl,
     createdAt: u.createdAt.toISOString(),
-  };
+  });
 }
 
 export async function getProfile(userId: string): Promise<AuthUser> {

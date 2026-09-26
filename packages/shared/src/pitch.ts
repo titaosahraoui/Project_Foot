@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  matchFormatSchema,
+  type MatchFormat,
+  moneySchema,
+  type Money,
+} from "./domain";
 
 export const pitchSurfaceSchema = z.enum([
   "NATURAL_GRASS",
@@ -8,50 +14,229 @@ export const pitchSurfaceSchema = z.enum([
 ]);
 export type PitchSurface = z.infer<typeof pitchSurfaceSchema>;
 
-export const pitchSizeSchema = z.enum([
-  "FIVE_A_SIDE",
-  "SEVEN_A_SIDE",
-  "ELEVEN_A_SIDE",
-]);
-export type PitchSize = z.infer<typeof pitchSizeSchema>;
+/**
+ * Deprecated alias of matchFormatSchema during the migration so pitch and match formats cannot diverge.
+ */
+export const pitchSizeSchema = matchFormatSchema;
+export type PitchSize = MatchFormat;
 
-export const createPitchSchema = z.object({
-  name: z.string().min(2).max(100),
-  description: z.string().max(1000).optional(),
-  address: z.string().min(5).max(200),
-  city: z.string().min(2).max(100),
-  lat: z.number().min(-90).max(90),
-  lng: z.number().min(-180).max(180),
-  surface: pitchSurfaceSchema,
-  size: pitchSizeSchema,
-  pricePerHour: z.number().min(0),
-  amenities: z.array(z.string()).optional().default([]),
-  photos: z.array(z.string().url()).optional().default([]),
+export function timeStringToMinutes(time: string): number {
+  const parts = time.split(":");
+  const hStr = parts[0];
+  const mStr = parts[1];
+  if (parts.length !== 2 || hStr === undefined || mStr === undefined) {
+    throw new Error(`Invalid time string: ${time}`);
+  }
+  const h = Number(hStr);
+  const m = Number(mStr);
+  if (isNaN(h) || isNaN(m)) {
+    throw new Error(`Invalid time string: ${time}`);
+  }
+  return h * 60 + m;
+}
+
+export function minutesToTimeString(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}`;
+}
+
+export const pitchAvailabilityRuleSchema = z.object({
+  id: z.string().uuid(),
+  pitchId: z.string().uuid(),
+  dayOfWeek: z.number().int().min(0).max(6),
+  startMinute: z.number().int().min(0).max(1440),
+  endMinute: z.number().int().min(0).max(1440),
+  startTime: z.string().regex(/^([01]\d|2[0-3]|24):[0-5]\d$/),
+  endTime: z.string().regex(/^([01]\d|2[0-3]|24):[0-5]\d$/),
+  timezone: z.literal("Africa/Algiers").default("Africa/Algiers"),
+  isActive: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
 });
-export type CreatePitchInput = z.infer<typeof createPitchSchema>;
+export type PitchAvailabilityRule = z.infer<typeof pitchAvailabilityRuleSchema>;
 
-export const updatePitchSchema = createPitchSchema.partial().extend({
-  isActive: z.boolean().optional(),
+export const setPitchAvailabilityRuleItemSchema = z
+  .object({
+    dayOfWeek: z.number().int().min(0).max(6),
+    startMinute: z.number().int().min(0).max(1440).optional(),
+    endMinute: z.number().int().min(0).max(1440).optional(),
+    startTime: z.string().regex(/^([01]\d|2[0-3]|24):[0-5]\d$/).optional(),
+    endTime: z.string().regex(/^([01]\d|2[0-3]|24):[0-5]\d$/).optional(),
+    isActive: z.boolean().optional().default(true),
+  })
+  .transform((data) => {
+    const startMinute =
+      data.startMinute !== undefined
+        ? data.startMinute
+        : data.startTime
+          ? timeStringToMinutes(data.startTime)
+          : undefined;
+    const endMinute =
+      data.endMinute !== undefined
+        ? data.endMinute
+        : data.endTime
+          ? timeStringToMinutes(data.endTime)
+          : undefined;
+    return {
+      dayOfWeek: data.dayOfWeek,
+      startMinute: startMinute!,
+      endMinute: endMinute!,
+      isActive: data.isActive ?? true,
+    };
+  })
+  .refine((data) => data.startMinute !== undefined && data.endMinute !== undefined, {
+    message: "startMinute/startTime and endMinute/endTime are required",
+  })
+  .refine((data) => data.endMinute > data.startMinute, {
+    message: "endMinute must be greater than startMinute",
+    path: ["endMinute"],
+  })
+  .refine((data) => data.endMinute - data.startMinute >= 30, {
+    message: "Availability rule must be at least 30 minutes long",
+    path: ["endMinute"],
+  });
+export type SetPitchAvailabilityRuleItemInput = z.input<typeof setPitchAvailabilityRuleItemSchema>;
+export type SetPitchAvailabilityRuleItem = z.output<typeof setPitchAvailabilityRuleItemSchema>;
+
+export const setPitchAvailabilityRulesSchema = z.object({
+  rules: z.array(setPitchAvailabilityRuleItemSchema),
 });
-export type UpdatePitchInput = z.infer<typeof updatePitchSchema>;
+export type SetPitchAvailabilityRulesInput = z.input<typeof setPitchAvailabilityRulesSchema>;
+export type SetPitchAvailabilityRulesPayload = z.output<typeof setPitchAvailabilityRulesSchema>;
 
+export interface BlockingRange {
+  startAt: Date;
+  endAt: Date;
+}
+
+export const pitchBlockSchema = z.object({
+  id: z.string().uuid(),
+  pitchId: z.string().uuid(),
+  startAt: z.string(),
+  endAt: z.string(),
+  reason: z.string().nullable().optional(),
+  createdById: z.string().uuid(),
+  createdAt: z.string(),
+  cancelledAt: z.string().nullable().optional(),
+});
+export type PitchBlock = z.infer<typeof pitchBlockSchema>;
+
+export const createPitchBlockSchema = z
+  .object({
+    startAt: z.string().datetime({ offset: true }).or(z.string()),
+    endAt: z.string().datetime({ offset: true }).or(z.string()),
+    reason: z.string().max(500).optional(),
+  })
+  .refine(
+    (data) => {
+      const start = new Date(data.startAt).getTime();
+      const end = new Date(data.endAt).getTime();
+      return !isNaN(start) && !isNaN(end) && end > start;
+    },
+    {
+      message: "endAt must be after startAt",
+      path: ["endAt"],
+    },
+  );
+export type CreatePitchBlockInput = z.infer<typeof createPitchBlockSchema>;
+
+export const availableSlotQuerySchema = z
+  .object({
+    from: z.string().datetime({ offset: true }).or(z.string()),
+    to: z.string().datetime({ offset: true }).or(z.string()),
+    durationMinutes: z.coerce.number().int().min(30).max(180).default(60),
+  })
+  .refine(
+    (data) => {
+      const fromDate = new Date(data.from).getTime();
+      const toDate = new Date(data.to).getTime();
+      return !isNaN(fromDate) && !isNaN(toDate) && toDate > fromDate;
+    },
+    {
+      message: "to must be after from",
+      path: ["to"],
+    },
+  )
+  .refine(
+    (data) => {
+      const fromDate = new Date(data.from).getTime();
+      const toDate = new Date(data.to).getTime();
+      const maxRangeMs = 31 * 24 * 60 * 60 * 1000;
+      return toDate - fromDate <= maxRangeMs;
+    },
+    {
+      message: "Query range cannot exceed 31 days",
+      path: ["to"],
+    },
+  );
+export type AvailableSlotQuery = z.input<typeof availableSlotQuerySchema>;
+
+export const availableSlotSchema = z.object({
+  startAt: z.string(),
+  endAt: z.string(),
+  price: moneySchema,
+});
+export type AvailableSlot = z.infer<typeof availableSlotSchema>;
+
+/**
+ * Deprecated PitchSlot schema kept for backwards compatibility until M05-T06.
+ */
 export const pitchSlotSchema = z.object({
   id: z.string().uuid(),
   pitchId: z.string().uuid(),
   dayOfWeek: z.number().int().min(0).max(6),
-  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-  endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  startTime: z.string().regex(/^([01]\d|2[0-3]|24):[0-5]\d$/),
+  endTime: z.string().regex(/^([01]\d|2[0-3]|24):[0-5]\d$/),
   isBookable: z.boolean(),
 });
 export type PitchSlot = z.infer<typeof pitchSlotSchema>;
 
 export const createPitchSlotSchema = z.object({
   dayOfWeek: z.number().int().min(0).max(6),
-  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-  endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  startTime: z.string().regex(/^([01]\d|2[0-3]|24):[0-5]\d$/),
+  endTime: z.string().regex(/^([01]\d|2[0-3]|24):[0-5]\d$/),
   isBookable: z.boolean().optional().default(true),
 });
 export type CreatePitchSlotInput = z.infer<typeof createPitchSlotSchema>;
+
+export const createPitchSchema = z
+  .object({
+    name: z.string().min(2).max(100),
+    description: z.string().max(1000).optional(),
+    address: z.string().min(5).max(200),
+    city: z.string().min(2).max(100),
+    lat: z.number().min(-90).max(90),
+    lng: z.number().min(-180).max(180),
+    surface: pitchSurfaceSchema,
+    format: matchFormatSchema.optional(),
+    size: pitchSizeSchema.optional(), // deprecated alias
+    hourlyRate: moneySchema,
+    amenities: z.array(z.string()).optional().default([]),
+    photos: z.array(z.string().url()).optional().default([]),
+  })
+  .refine((data) => data.format !== undefined || data.size !== undefined, {
+    message: "Either format or size must be provided",
+    path: ["format"],
+  });
+export type CreatePitchInput = z.infer<typeof createPitchSchema>;
+
+export const updatePitchSchema = z.object({
+  name: z.string().min(2).max(100).optional(),
+  description: z.string().max(1000).optional(),
+  address: z.string().min(5).max(200).optional(),
+  city: z.string().min(2).max(100).optional(),
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
+  surface: pitchSurfaceSchema.optional(),
+  format: matchFormatSchema.optional(),
+  size: pitchSizeSchema.optional(),
+  hourlyRate: moneySchema.optional(),
+  amenities: z.array(z.string()).optional(),
+  photos: z.array(z.string().url()).optional(),
+  isActive: z.boolean().optional(),
+});
+export type UpdatePitchInput = z.infer<typeof updatePitchSchema>;
 
 export const pitchSchema = z.object({
   id: z.string().uuid(),
@@ -63,8 +248,9 @@ export const pitchSchema = z.object({
   lat: z.number(),
   lng: z.number(),
   surface: pitchSurfaceSchema,
-  size: pitchSizeSchema,
-  pricePerHour: z.number(),
+  format: matchFormatSchema,
+  size: pitchSizeSchema, // deprecated alias
+  hourlyRate: moneySchema,
   amenities: z.array(z.string()),
   photos: z.array(z.string()),
   isActive: z.boolean(),
@@ -74,17 +260,34 @@ export const pitchSchema = z.object({
 export type Pitch = z.infer<typeof pitchSchema>;
 
 export const pitchDetailSchema = pitchSchema.extend({
-  slots: z.array(pitchSlotSchema),
+  availabilityRules: z.array(pitchAvailabilityRuleSchema),
+  slots: z.array(pitchSlotSchema).default([]), // deprecated alias
+  blocks: z.array(pitchBlockSchema).optional(),
 });
 export type PitchDetail = z.infer<typeof pitchDetailSchema>;
 
 export const pitchQuerySchema = z.object({
   city: z.string().optional(),
   surface: pitchSurfaceSchema.optional(),
+  format: matchFormatSchema.optional(),
   size: pitchSizeSchema.optional(),
-  maxPrice: z.coerce.number().optional(),
+  maxPriceMinor: z.coerce.number().int().nonnegative().optional(),
+  maxPrice: z.coerce.number().int().nonnegative().optional(), // alias/back-compat for minor units
   lat: z.coerce.number().optional(),
   lng: z.coerce.number().optional(),
   radiusKm: z.coerce.number().optional().default(10),
 });
 export type PitchQuery = z.infer<typeof pitchQuerySchema>;
+
+/**
+ * Format a DZD Money instance as human-readable standard copy.
+ * e.g. amountMinor: 400000 -> "4,000 DZD", amountMinor: 8000 -> "80 DZD".
+ * Never uses '$'.
+ */
+export function formatPitchPrice(hourlyRate: Money): string {
+  const major = hourlyRate.amountMinor / 100;
+  const formatted = new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(major);
+  return `${formatted} DZD`;
+}

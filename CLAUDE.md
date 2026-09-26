@@ -14,7 +14,7 @@ Full architecture & phased roadmap: [`docs/architecture.md`](docs/architecture.m
 ## Stack
 
 - Monorepo: **Turborepo + pnpm** (`pnpm-workspace.yaml`, `turbo.json`)
-- Backend `apps/api`: **structured Express + TypeScript** (modular monolith), **Prisma**, **PostgreSQL**, **Redis**
+- Backend `apps/api`: **structured Express + TypeScript** (modular monolith), **Prisma**, **PostgreSQL (Supabase)**, **Redis (Upstash)**
 - Web `apps/web`: **Next.js + TypeScript** (pitch-owner dashboard)
 - Mobile `apps/mobile`: **React Native + Expo** (player app)
 - Shared `packages/*`: `@footconnect/shared` (Zod + types), `@footconnect/api-client`, `@footconnect/ui`, `@footconnect/config`
@@ -29,7 +29,7 @@ packages/shared      Zod schemas + inferred types (single source of truth)
 packages/api-client  typed REST client (used by web + mobile)
 packages/ui          design tokens
 packages/config      tsconfig / eslint / prettier presets
-infra/docker-compose.yml   Postgres + Redis
+infra/docker-compose.yml   Optional reference (cloud services used)
 ```
 
 ## Core architecture rule (modular monolith)
@@ -58,8 +58,8 @@ Zod schemas in `@footconnect/shared` are the single source of truth — imported
 ```bash
 pnpm install                                   # install all workspaces
 cp .env.example .env                            # configure env
-pnpm docker:up                                  # Postgres + Redis
-pnpm --filter @footconnect/api prisma:migrate   # run migrations
+pnpm --filter @footconnect/api prisma:migrate   # run migrations (Supabase)
+pnpm --filter @footconnect/api prisma:seed      # seed initial accounts
 pnpm dev                                        # run all apps via turbo
 pnpm --filter @footconnect/api dev              # just the API
 pnpm --filter @footconnect/web dev              # just the dashboard

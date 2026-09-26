@@ -1,16 +1,26 @@
 import { Prisma } from "@prisma/client";
-import type { CreatePitchInput, CreatePitchSlotInput, PitchQuery, UpdatePitchInput } from "@footconnect/shared";
+import type {
+  CreatePitchInput,
+  PitchQuery,
+  SetPitchAvailabilityRuleItem,
+  UpdatePitchInput,
+} from "@footconnect/shared";
 import { prisma } from "../../lib/prisma";
 
 const pitchInclude = {
-  slots: {
-    orderBy: [{ dayOfWeek: "asc" as const }, { startTime: "asc" as const }],
+  availabilityRules: {
+    orderBy: [{ dayOfWeek: "asc" as const }, { startMinute: "asc" as const }],
+  },
+  blocks: {
+    where: { cancelledAt: null },
+    orderBy: { startAt: "asc" as const },
   },
 } satisfies Prisma.PitchInclude;
 
-export type PitchWithSlots = Prisma.PitchGetPayload<{ include: typeof pitchInclude }>;
+export type PitchWithRulesAndBlocks = Prisma.PitchGetPayload<{ include: typeof pitchInclude }>;
 
-export function createPitch(ownerId: string, data: CreatePitchInput): Promise<PitchWithSlots> {
+export function createPitch(ownerId: string, data: CreatePitchInput): Promise<PitchWithRulesAndBlocks> {
+  const format = (data.format ?? data.size)!;
   return prisma.pitch.create({
     data: {
       ownerId,
@@ -21,8 +31,9 @@ export function createPitch(ownerId: string, data: CreatePitchInput): Promise<Pi
       lat: data.lat,
       lng: data.lng,
       surface: data.surface,
-      size: data.size,
-      pricePerHour: data.pricePerHour,
+      size: format,
+      priceAmountMinor: data.hourlyRate.amountMinor,
+      currency: data.hourlyRate.currency,
       amenities: data.amenities ?? [],
       photos: data.photos ?? [],
     },
@@ -30,14 +41,14 @@ export function createPitch(ownerId: string, data: CreatePitchInput): Promise<Pi
   });
 }
 
-export function findPitchById(id: string): Promise<PitchWithSlots | null> {
+export function findPitchById(id: string): Promise<PitchWithRulesAndBlocks | null> {
   return prisma.pitch.findUnique({
     where: { id },
     include: pitchInclude,
   });
 }
 
-export function findMyPitches(ownerId: string): Promise<PitchWithSlots[]> {
+export function findMyPitches(ownerId: string): Promise<PitchWithRulesAndBlocks[]> {
   return prisma.pitch.findMany({
     where: { ownerId },
     include: pitchInclude,
@@ -45,7 +56,23 @@ export function findMyPitches(ownerId: string): Promise<PitchWithSlots[]> {
   });
 }
 
-export async function findPitches(query: PitchQuery): Promise<PitchWithSlots[]> {
+/**
+ * Computes a bounding box (minLat, maxLat, minLng, maxLng) in degrees for PostgreSQL index filtering.
+ * 1 degree latitude ≈ 111.045 km
+ */
+export function computeBoundingBox(lat: number, lng: number, radiusKm: number) {
+  const latDelta = radiusKm / 111.045;
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  const lngDelta = cosLat > 0.0001 ? radiusKm / (111.045 * cosLat) : radiusKm / 111.045;
+  return {
+    minLat: lat - latDelta,
+    maxLat: lat + latDelta,
+    minLng: lng - lngDelta,
+    maxLng: lng + lngDelta,
+  };
+}
+
+export async function findPitches(query: PitchQuery): Promise<PitchWithRulesAndBlocks[]> {
   const where: Prisma.PitchWhereInput = {
     isActive: true,
   };
@@ -56,11 +83,26 @@ export async function findPitches(query: PitchQuery): Promise<PitchWithSlots[]> 
   if (query.surface) {
     where.surface = query.surface;
   }
-  if (query.size) {
-    where.size = query.size;
+  const format = query.format ?? query.size;
+  if (format) {
+    where.size = format;
   }
-  if (query.maxPrice !== undefined) {
-    where.pricePerHour = { lte: query.maxPrice };
+  const maxPriceMinor = query.maxPriceMinor ?? query.maxPrice;
+  if (maxPriceMinor !== undefined) {
+    where.priceAmountMinor = { lte: maxPriceMinor };
+  }
+
+  // If lat/lng provided, apply bounding box in database query to avoid reading all rows
+  if (query.lat !== undefined && query.lng !== undefined && query.radiusKm) {
+    const bbox = computeBoundingBox(query.lat, query.lng, query.radiusKm);
+    where.lat = {
+      gte: bbox.minLat,
+      lte: bbox.maxLat,
+    };
+    where.lng = {
+      gte: bbox.minLng,
+      lte: bbox.maxLng,
+    };
   }
 
   const pitches = await prisma.pitch.findMany({
@@ -93,7 +135,8 @@ export async function findPitches(query: PitchQuery): Promise<PitchWithSlots[]> 
   return pitches;
 }
 
-export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWithSlots> {
+export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWithRulesAndBlocks> {
+  const format = data.format ?? data.size;
   return prisma.pitch.update({
     where: { id },
     data: {
@@ -104,8 +147,11 @@ export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWi
       ...(data.lat !== undefined && { lat: data.lat }),
       ...(data.lng !== undefined && { lng: data.lng }),
       ...(data.surface !== undefined && { surface: data.surface }),
-      ...(data.size !== undefined && { size: data.size }),
-      ...(data.pricePerHour !== undefined && { pricePerHour: data.pricePerHour }),
+      ...(format !== undefined && { size: format }),
+      ...(data.hourlyRate !== undefined && {
+        priceAmountMinor: data.hourlyRate.amountMinor,
+        currency: data.hourlyRate.currency,
+      }),
       ...(data.amenities !== undefined && { amenities: data.amenities }),
       ...(data.photos !== undefined && { photos: data.photos }),
       ...(data.isActive !== undefined && { isActive: data.isActive }),
@@ -114,36 +160,72 @@ export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWi
   });
 }
 
-export function findPitchSlots(pitchId: string) {
-  return prisma.pitchSlot.findMany({
+export function findAvailabilityRules(pitchId: string) {
+  return prisma.pitchAvailabilityRule.findMany({
     where: { pitchId },
-    orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
+    orderBy: [{ dayOfWeek: "asc" }, { startMinute: "asc" }],
   });
 }
 
-export async function upsertPitchSlots(pitchId: string, slots: CreatePitchSlotInput[]) {
-  const operations = slots.map((s) =>
-    prisma.pitchSlot.upsert({
-      where: {
-        pitchId_dayOfWeek_startTime: {
+export async function replaceAvailabilityRules(
+  pitchId: string,
+  rules: SetPitchAvailabilityRuleItem[],
+) {
+  return prisma.$transaction(async (tx) => {
+    await tx.pitchAvailabilityRule.deleteMany({ where: { pitchId } });
+    if (rules.length > 0) {
+      await tx.pitchAvailabilityRule.createMany({
+        data: rules.map((r) => ({
           pitchId,
-          dayOfWeek: s.dayOfWeek,
-          startTime: s.startTime,
-        },
-      },
-      create: {
-        pitchId,
-        dayOfWeek: s.dayOfWeek,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        isBookable: s.isBookable ?? true,
-      },
-      update: {
-        endTime: s.endTime,
-        isBookable: s.isBookable ?? true,
-      },
-    }),
-  );
+          dayOfWeek: r.dayOfWeek,
+          startMinute: r.startMinute,
+          endMinute: r.endMinute,
+          timezone: "Africa/Algiers",
+          isActive: r.isActive,
+        })),
+      });
+    }
+    return tx.pitchAvailabilityRule.findMany({
+      where: { pitchId },
+      orderBy: [{ dayOfWeek: "asc" }, { startMinute: "asc" }],
+    });
+  });
+}
 
-  return prisma.$transaction(operations);
+export function createPitchBlock(
+  pitchId: string,
+  data: { startAt: Date; endAt: Date; reason?: string | null; createdById: string },
+) {
+  return prisma.pitchBlock.create({
+    data: {
+      pitchId,
+      startAt: data.startAt,
+      endAt: data.endAt,
+      reason: data.reason ?? null,
+      createdById: data.createdById,
+    },
+  });
+}
+
+export function findPitchBlockById(id: string) {
+  return prisma.pitchBlock.findUnique({ where: { id } });
+}
+
+export function cancelPitchBlock(id: string) {
+  return prisma.pitchBlock.update({
+    where: { id },
+    data: { cancelledAt: new Date() },
+  });
+}
+
+export function findActivePitchBlocks(pitchId: string, from: Date, to: Date) {
+  return prisma.pitchBlock.findMany({
+    where: {
+      pitchId,
+      cancelledAt: null,
+      startAt: { lt: to },
+      endAt: { gt: from },
+    },
+    orderBy: { startAt: "asc" },
+  });
 }

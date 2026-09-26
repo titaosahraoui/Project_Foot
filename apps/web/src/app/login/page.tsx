@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { loginSchema } from "@footconnect/shared";
@@ -63,6 +64,15 @@ export default function LoginPage() {
         >
           {submitting ? "Signing in…" : "Sign in"}
         </button>
+        <p className="text-center text-sm text-gray-600 dark:text-gray-400">
+          New to FootConnect?{" "}
+          <Link
+            href="/register"
+            className="font-medium text-green-600 hover:underline"
+          >
+            Create an account
+          </Link>
+        </p>
       </form>
     </main>
   );
