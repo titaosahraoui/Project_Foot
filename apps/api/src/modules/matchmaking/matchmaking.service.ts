@@ -10,7 +10,7 @@ import {
   type RecommendedTeamSummary,
   type TeamAvailability,
 } from "@footconnect/shared";
-import type { RepositoryContext } from "../../lib/transaction";
+import { withTransaction, type RepositoryContext } from "../../lib/transaction";
 import { HttpError } from "../../middleware/error-handler";
 import * as ratingsService from "../ratings/ratings.service";
 import * as teamsService from "../teams/teams.service";
@@ -94,33 +94,63 @@ export async function createAvailability(
   const startAt = new Date(payload.startAt);
   const endAt = new Date(payload.endAt);
 
-  // 3. Enforce no overlapping OPEN windows for this team
-  const existing = await repo.listAvailabilityByTeams(
-    [payload.teamId],
-    { statuses: ["OPEN"] },
-    tx,
-  );
-  assertNoOpenOverlap({ startAt, endAt }, existing);
+  const execute = async (client: RepositoryContext) => {
+    // 3. Serialize concurrent creates for the same team via transaction-level advisory lock
+    await repo.acquireTeamAvailabilityLock(payload.teamId, client);
 
-  // 4. Persist availability record
-  const record = await repo.createAvailability(
-    {
-      teamId: payload.teamId,
-      createdById: actorId,
-      startAt,
-      endAt,
-      format: payload.format,
-      originLat: payload.origin.lat,
-      originLng: payload.origin.lng,
-      radiusKm: payload.radiusKm,
-      eloTolerance: payload.eloTolerance,
-      message: payload.message,
-      expiresAt: startAt,
-    },
-    tx,
-  );
+    // 4. Enforce no overlapping OPEN windows for this team
+    const existing = await repo.listAvailabilityByTeams(
+      [payload.teamId],
+      { statuses: ["OPEN"] },
+      client,
+    );
+    assertNoOpenOverlap({ startAt, endAt }, existing);
 
-  return toTeamAvailability(record);
+    // 5. Persist availability record
+    const record = await repo.createAvailability(
+      {
+        teamId: payload.teamId,
+        createdById: actorId,
+        startAt,
+        endAt,
+        format: payload.format,
+        originLat: payload.origin.lat,
+        originLng: payload.origin.lng,
+        radiusKm: payload.radiusKm,
+        eloTolerance: payload.eloTolerance,
+        message: payload.message,
+        expiresAt: startAt,
+      },
+      client,
+    );
+
+    return toTeamAvailability(record);
+  };
+
+  try {
+    if (tx) {
+      return await execute(tx);
+    }
+    return await withTransaction(execute);
+  } catch (err: unknown) {
+    if (err instanceof HttpError) {
+      throw err;
+    }
+    const errMessage = err instanceof Error ? err.message : String(err);
+    const errCode = (err as { code?: string })?.code;
+    if (
+      errCode === "P2002" ||
+      errCode === "P2010" ||
+      errMessage.includes("team_availabilities_no_overlapping_open") ||
+      errMessage.includes("exclusion")
+    ) {
+      throw new HttpError(
+        409,
+        "Team already has an open availability that overlaps with this time window",
+      );
+    }
+    throw err;
+  }
 }
 
 /**

@@ -89,6 +89,28 @@ describe("team_availabilities migration (integration)", () => {
   ] as const)("rejects %s at the database level", async (_label, overrides) => {
     await expect(repo.createAvailability(baseRecord(overrides))).rejects.toThrow();
   });
+
+  it("rejects overlapping OPEN availability for the same team at the database level", async () => {
+    const windowStart = new Date("2026-12-01T10:00:00.000Z");
+    const windowEnd = new Date("2026-12-01T12:00:00.000Z");
+
+    const first = await repo.createAvailability(
+      baseRecord({ startAt: windowStart, endAt: windowEnd, expiresAt: windowStart }),
+    );
+
+    // Overlapping window for the same team
+    const overlapStart = new Date("2026-12-01T11:00:00.000Z");
+    const overlapEnd = new Date("2026-12-01T13:00:00.000Z");
+
+    await expect(
+      repo.createAvailability(
+        baseRecord({ startAt: overlapStart, endAt: overlapEnd, expiresAt: overlapStart }),
+      ),
+    ).rejects.toThrow();
+
+    // Clean up
+    await prisma.teamAvailability.deleteMany({ where: { id: first.id } });
+  });
 });
 
 describe("matchmaking repository (integration)", () => {
@@ -115,11 +137,25 @@ describe("matchmaking repository (integration)", () => {
     expect(created.updatedAt).toBeInstanceOf(Date);
   });
 
-  it.each(["FIVE_A_SIDE", "SEVEN_A_SIDE", "ELEVEN_A_SIDE"] as const)(
+  it.each([
+    ["FIVE_A_SIDE", 1],
+    ["SEVEN_A_SIDE", 2],
+    ["ELEVEN_A_SIDE", 3],
+  ] as const)(
     "round-trips the %s format enum",
-    async (format) => {
+    async (format, dayOffset) => {
+      const start = new Date(startAt.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+      const end = new Date(endAt.getTime() + dayOffset * 24 * 60 * 60 * 1000);
       const created = await repo.createAvailability(
-        baseRecord({ format, radiusKm: 50, eloTolerance: 500, message: "Bring bibs" }),
+        baseRecord({
+          format,
+          startAt: start,
+          endAt: end,
+          expiresAt: start,
+          radiusKm: 50,
+          eloTolerance: 500,
+          message: "Bring bibs",
+        }),
       );
       const found = await repo.findAvailabilityById(created.id);
 
@@ -152,7 +188,12 @@ describe("matchmaking repository (integration)", () => {
       }),
     );
     const cancelled = await repo.createAvailability(
-      baseRecord({ teamId: otherTeamId }),
+      baseRecord({
+        teamId: otherTeamId,
+        startAt: new Date("2026-11-01T17:00:00.000Z"),
+        endAt: new Date("2026-11-01T18:00:00.000Z"),
+        expiresAt: new Date("2026-11-01T17:00:00.000Z"),
+      }),
     );
     await repo.updateAvailability(cancelled.id, {
       status: "CANCELLED",
@@ -171,7 +212,11 @@ describe("matchmaking repository (integration)", () => {
   });
 
   it("updates lifecycle fields and bumps updatedAt", async () => {
-    const created = await repo.createAvailability(baseRecord());
+    const start = new Date("2026-11-10T17:00:00.000Z");
+    const end = new Date("2026-11-10T18:30:00.000Z");
+    const created = await repo.createAvailability(
+      baseRecord({ startAt: start, endAt: end, expiresAt: start }),
+    );
     const matchedAt = new Date("2026-10-20T10:00:00.000Z");
 
     const updated = await repo.updateAvailability(created.id, {
@@ -188,10 +233,15 @@ describe("matchmaking repository (integration)", () => {
   });
 
   it("participates in a caller-provided transaction", async () => {
+    const start = new Date("2026-11-12T17:00:00.000Z");
+    const end = new Date("2026-11-12T18:30:00.000Z");
     let createdId = "";
     await expect(
       withTransaction(async (tx) => {
-        const created = await repo.createAvailability(baseRecord(), tx);
+        const created = await repo.createAvailability(
+          baseRecord({ startAt: start, endAt: end, expiresAt: start }),
+          tx,
+        );
         createdId = created.id;
         await expect(repo.findAvailabilityById(created.id, tx)).resolves.not.toBeNull();
         throw new Error("rollback");

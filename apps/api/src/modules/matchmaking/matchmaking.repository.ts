@@ -37,6 +37,13 @@ export interface ListAvailabilityFilter {
   statuses?: AvailabilityStatus[];
 }
 
+export async function acquireTeamAvailabilityLock(
+  teamId: string,
+  db: RepositoryContext = prisma,
+): Promise<void> {
+  await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`team_availability:${teamId}`}))`;
+}
+
 export function createAvailability(
   data: CreateAvailabilityRecord,
   db: RepositoryContext = prisma,

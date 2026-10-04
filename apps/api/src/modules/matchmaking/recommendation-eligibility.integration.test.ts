@@ -79,20 +79,20 @@ beforeAll(async () => {
   });
   searchAvailabilityId = aSearch.id;
 
-  // Search team's OWN additional availability (to prove exclusion for own team)
+  // Search team's OWN additional availability (to prove exclusion for own team at another non-overlapping time)
   await prisma.teamAvailability.create({
     data: {
       teamId: searchTeamId,
       createdById: captainSearchId,
-      startAt: new Date(BASE_TIME),
-      endAt: new Date(BASE_TIME + 2 * HOUR_MS),
+      startAt: new Date(BASE_TIME + 10 * HOUR_MS),
+      endAt: new Date(BASE_TIME + 12 * HOUR_MS),
       format: "FIVE_A_SIDE",
       originLat: COORD_HYDRA.lat,
       originLng: COORD_HYDRA.lng,
       radiusKm: 10,
       eloTolerance: 150,
       status: "OPEN",
-      expiresAt: new Date(BASE_TIME),
+      expiresAt: new Date(BASE_TIME + 10 * HOUR_MS),
     },
   });
 

@@ -235,6 +235,45 @@ describe("POST /api/v1/matchmaking/availability", () => {
       });
     expect(res.status).toBe(409);
   });
+
+  it("rejects concurrent requests creating overlapping windows for the same team with 409", async () => {
+    // Launch two requests concurrently for the exact same team and overlapping time window
+    const start = Date.now() + 40 * HOUR_MS;
+    const end = start + 90 * MINUTE_MS;
+
+    const payload = {
+      teamId: teamBId,
+      startAt: new Date(start).toISOString(),
+      endAt: new Date(end).toISOString(),
+      format: "FIVE_A_SIDE",
+      origin: { lat: 36.7538, lng: 3.0588 },
+    };
+
+    const [res1, res2] = await Promise.all([
+      request(app)
+        .post("/api/v1/matchmaking/availability")
+        .set(authHeader(capBToken))
+        .send(payload),
+      request(app)
+        .post("/api/v1/matchmaking/availability")
+        .set(authHeader(capBToken))
+        .send(payload),
+    ]);
+
+    // Exactly one should succeed with 201, and the other must be rejected with 409
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toEqual([201, 409]);
+
+    // Ensure database only contains 1 created availability for this team in this window
+    const count = await prisma.teamAvailability.count({
+      where: {
+        teamId: teamBId,
+        status: "OPEN",
+        startAt: new Date(start),
+      },
+    });
+    expect(count).toBe(1);
+  });
 });
 
 describe("GET /api/v1/matchmaking/availability/mine", () => {
