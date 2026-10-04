@@ -547,6 +547,42 @@ describe("GET /api/v1/matchmaking/availability/:id/recommendations", { timeout: 
     expect(candidateTeamIds).not.toContain(teamDId);
   });
 
+  it("returns empty recommendations when availability is past its expiry/end deadline", async () => {
+    // Create an availability that is stored as OPEN but has past expiry deadline
+    const pastStart = Date.now() - 2 * HOUR_MS;
+    const pastEnd = Date.now() - 1 * HOUR_MS;
+    const expiredAvail = await prisma.teamAvailability.create({
+      data: {
+        teamId: teamAId,
+        createdById: capAId,
+        startAt: new Date(pastStart),
+        endAt: new Date(pastEnd),
+        format: "FIVE_A_SIDE",
+        originLat: 36.7441,
+        originLng: 3.0422,
+        radiusKm: 10,
+        eloTolerance: 150,
+        status: "OPEN",
+        expiresAt: new Date(pastStart),
+      },
+    });
+
+    const res = await request(app)
+      .get(
+        `/api/v1/matchmaking/availability/${expiredAvail.id}/recommendations`,
+      )
+      .set(authHeader(capAToken));
+
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(0);
+    expect(res.body.items).toEqual([]);
+
+    // Clean up
+    await prisma.teamAvailability.deleteMany({
+      where: { id: expiredAvail.id },
+    });
+  });
+
   it("sorts deterministically by score descending, then distance ascending, then team ID", async () => {
     // Create two more candidates with identical Elo and format, but different distances and IDs
     const start = recWindowStart;

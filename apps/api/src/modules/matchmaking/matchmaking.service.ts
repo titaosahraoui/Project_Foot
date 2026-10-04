@@ -195,22 +195,25 @@ export async function getRecommendations(
   now: Date = new Date(),
   tx?: RepositoryContext,
 ): Promise<PaginatedRecommendations> {
+  // 1. Expire due availabilities before computing recommendations so DB status is fresh
+  await expireDueAvailability(now, tx);
+
   const searching = await repo.findAvailabilityById(availabilityId, tx);
   if (!searching) {
     throw new HttpError(404, "Availability not found");
   }
 
-  // 1. Authorize: requires the availability team's active captain
+  // 2. Authorize: requires the availability team's active captain
   await teamsService.assertActiveCaptain(searching.teamId, actorId);
-
-  // 2. Expire due availabilities before computing recommendations
-  await expireDueAvailability(now, tx);
 
   const page = query.page ?? 1;
   const pageSize = query.pageSize ?? 20;
 
-  // 3. If searching availability is not OPEN, return empty recommendations
-  if (searching.status !== "OPEN") {
+  // 3. If searching availability is not OPEN or is past its deadline, return empty recommendations
+  const isDue =
+    searching.endAt.getTime() <= now.getTime() ||
+    searching.expiresAt.getTime() <= now.getTime();
+  if (searching.status !== "OPEN" || isDue) {
     return { items: [], page, pageSize, total: 0 };
   }
 
