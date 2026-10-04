@@ -52,6 +52,7 @@ model User {
   invitationsSent     Invitation[]     @relation("inviter")
   pitches             Pitch[]
   refreshSessions     RefreshSession[]
+  organizedChallenges MatchChallenge[]
 
   @@map("users")
 }
@@ -172,11 +173,13 @@ model Team {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
-  rating         TeamRating?
-  members        TeamMembership[]
-  invitations    Invitation[]
-  lineups        TeamLineup[]
-  availabilities TeamAvailability[]
+  rating               TeamRating?
+  members              TeamMembership[]
+  invitations          Invitation[]
+  lineups              TeamLineup[]
+  availabilities       TeamAvailability[]
+  challengerChallenges MatchChallenge[]   @relation("challengerChallenges")
+  opponentChallenges   MatchChallenge[]   @relation("opponentChallenges")
 
   @@map("teams")
 }
@@ -290,10 +293,61 @@ model TeamAvailability {
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
+  challengerChallenges MatchChallenge[]   @relation("challengerAvailabilityChallenges")
+  opponentChallenges   MatchChallenge[]   @relation("opponentAvailabilityChallenges")
+
   @@index([teamId, status])
   @@index([status, startAt, endAt])
   @@index([status, expiresAt])
   @@map("team_availabilities")
+}
+
+enum ChallengeStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+  EXPIRED
+}
+
+/// A proposed match between two teams based on overlapping availability.
+/// Agreed window and geography are snapshotted on creation to preserve integrity.
+model MatchChallenge {
+  id                       String          @id @default(uuid())
+  challengerTeamId         String
+  opponentTeamId           String
+  challengerAvailabilityId String
+  opponentAvailabilityId   String
+  organizerUserId          String
+  format                   MatchFormat
+  startAt                  DateTime
+  endAt                    DateTime
+  originLat                Float
+  originLng                Float
+  radiusKm                 Int
+  responseDeadline         DateTime
+  bookingDeadline          DateTime?
+  status                   ChallengeStatus @default(PENDING)
+  message                  String?         @db.VarChar(280)
+  respondedAt              DateTime?
+  cancelledAt              DateTime?
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
+
+  challengerTeam         Team             @relation("challengerChallenges", fields: [challengerTeamId], references: [id], onDelete: Cascade)
+  opponentTeam           Team             @relation("opponentChallenges", fields: [opponentTeamId], references: [id], onDelete: Cascade)
+  challengerAvailability TeamAvailability @relation("challengerAvailabilityChallenges", fields: [challengerAvailabilityId], references: [id], onDelete: Cascade)
+  opponentAvailability   TeamAvailability @relation("opponentAvailabilityChallenges", fields: [opponentAvailabilityId], references: [id], onDelete: Cascade)
+  organizerUser          User             @relation(fields: [organizerUserId], references: [id], onDelete: Cascade)
+
+  @@index([challengerTeamId, status])
+  @@index([opponentTeamId, status])
+  @@index([challengerAvailabilityId])
+  @@index([opponentAvailabilityId])
+  @@index([organizerUserId])
+  @@index([status, responseDeadline])
+  @@index([status, bookingDeadline])
+  @@map("match_challenges")
 }
 
 model IdempotencyRecord {

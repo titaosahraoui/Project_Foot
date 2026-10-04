@@ -314,3 +314,184 @@ export const paginatedRecommendationsSchema = z
 export type PaginatedRecommendations = z.infer<
   typeof paginatedRecommendationsSchema
 >;
+
+// ---------------------------------------------------------------------------
+// Match Challenge Domain & Lifecycle (Milestone 07)
+// ---------------------------------------------------------------------------
+
+export const challengeStatusSchema = z.enum([
+  "PENDING",
+  "ACCEPTED",
+  "DECLINED",
+  "CANCELLED",
+  "EXPIRED",
+]);
+export type ChallengeStatus = z.infer<typeof challengeStatusSchema>;
+
+export const CHALLENGE_RESPONSE_MAX_HOURS = 24;
+export const CHALLENGE_RESPONSE_MIN_HOURS_BEFORE_START = 4;
+export const CHALLENGE_BOOKING_MAX_HOURS = 24;
+export const CHALLENGE_BOOKING_MIN_HOURS_BEFORE_START = 2;
+
+/**
+ * Challenge response is due at the earlier of 24h after creation or 4h before the window starts.
+ */
+export function calculateChallengeResponseDeadline(
+  createdAt: Date,
+  startAt: Date,
+): Date {
+  const byHours = new Date(
+    createdAt.getTime() + CHALLENGE_RESPONSE_MAX_HOURS * HOUR_MS,
+  );
+  const byStart = new Date(
+    startAt.getTime() - CHALLENGE_RESPONSE_MIN_HOURS_BEFORE_START * HOUR_MS,
+  );
+  return byHours.getTime() < byStart.getTime() ? byHours : byStart;
+}
+
+/**
+ * Organizer booking is due at the earlier of 24h after acceptance or 2h before the window starts.
+ */
+export function calculateChallengeBookingDeadline(
+  acceptedAt: Date,
+  startAt: Date,
+): Date {
+  const byHours = new Date(
+    acceptedAt.getTime() + CHALLENGE_BOOKING_MAX_HOURS * HOUR_MS,
+  );
+  const byStart = new Date(
+    startAt.getTime() - CHALLENGE_BOOKING_MIN_HOURS_BEFORE_START * HOUR_MS,
+  );
+  return byHours.getTime() < byStart.getTime() ? byHours : byStart;
+}
+
+/** Snapshotted agreed conditions so later availability edits cannot alter an agreement. */
+export const matchChallengeConditionsSchema = z
+  .object({
+    format: matchFormatSchema,
+    startAt: utcDateTimeSchema,
+    endAt: utcDateTimeSchema,
+    approximateArea: approximateAreaSchema,
+    radiusKm: z
+      .number()
+      .int()
+      .min(AVAILABILITY_MIN_RADIUS_KM)
+      .max(AVAILABILITY_MAX_RADIUS_KM),
+  })
+  .strict();
+export type MatchChallengeConditions = z.infer<
+  typeof matchChallengeConditionsSchema
+>;
+
+/** Input to create a match challenge. Enforces different teams and different availability rows. */
+export const createMatchChallengeSchema = z
+  .object({
+    challengerTeamId: z.string().uuid().optional(),
+    opponentTeamId: z.string().uuid().optional(),
+    challengerAvailabilityId: z.string().uuid(),
+    opponentAvailabilityId: z.string().uuid(),
+    message: z.string().trim().max(AVAILABILITY_MESSAGE_MAX_LENGTH).optional(),
+  })
+  .strict()
+  .refine(
+    (data) =>
+      !data.challengerTeamId ||
+      !data.opponentTeamId ||
+      data.challengerTeamId !== data.opponentTeamId,
+    {
+      message: "Challenger and opponent teams must be different",
+      path: ["opponentTeamId"],
+    },
+  )
+  .refine(
+    (data) => data.challengerAvailabilityId !== data.opponentAvailabilityId,
+    {
+      message: "Challenger and opponent availabilities must be different",
+      path: ["opponentAvailabilityId"],
+    },
+  );
+export type CreateMatchChallengeInput = z.infer<
+  typeof createMatchChallengeSchema
+>;
+
+/** Standard challenge response record representation (mirroring persistence). */
+export const matchChallengeResponseSchema = z
+  .object({
+    id: z.string().uuid(),
+    challengerTeamId: z.string().uuid(),
+    opponentTeamId: z.string().uuid(),
+    challengerAvailabilityId: z.string().uuid(),
+    opponentAvailabilityId: z.string().uuid(),
+    organizerUserId: z.string().uuid(),
+    format: matchFormatSchema,
+    startAt: utcDateTimeSchema,
+    endAt: utcDateTimeSchema,
+    approximateArea: approximateAreaSchema,
+    radiusKm: z.number().int(),
+    responseDeadline: utcDateTimeSchema,
+    bookingDeadline: utcDateTimeSchema.nullable(),
+    status: challengeStatusSchema,
+    message: z.string().nullable(),
+    respondedAt: utcDateTimeSchema.nullable(),
+    cancelledAt: utcDateTimeSchema.nullable(),
+    createdAt: utcDateTimeSchema,
+    updatedAt: utcDateTimeSchema,
+  })
+  .strict();
+export type MatchChallengeResponse = z.infer<
+  typeof matchChallengeResponseSchema
+>;
+
+export const challengeActionSchema = z.enum(["ACCEPT", "DECLINE", "CANCEL"]);
+export type ChallengeAction = z.infer<typeof challengeActionSchema>;
+
+/** Summary view for inbox/outbox lists with team summaries and available actions. */
+export const matchChallengeSummarySchema = z
+  .object({
+    id: z.string().uuid(),
+    challengerTeamId: z.string().uuid(),
+    opponentTeamId: z.string().uuid(),
+    challengerTeam: recommendedTeamSummarySchema,
+    opponentTeam: recommendedTeamSummarySchema,
+    challengerAvailabilityId: z.string().uuid(),
+    opponentAvailabilityId: z.string().uuid(),
+    organizerUserId: z.string().uuid(),
+    format: matchFormatSchema,
+    startAt: utcDateTimeSchema,
+    endAt: utcDateTimeSchema,
+    approximateArea: approximateAreaSchema,
+    radiusKm: z.number().int(),
+    responseDeadline: utcDateTimeSchema,
+    bookingDeadline: utcDateTimeSchema.nullable(),
+    status: challengeStatusSchema,
+    message: z.string().nullable(),
+    respondedAt: utcDateTimeSchema.nullable(),
+    cancelledAt: utcDateTimeSchema.nullable(),
+    createdAt: utcDateTimeSchema,
+    updatedAt: utcDateTimeSchema,
+    availableActions: z.array(challengeActionSchema).default([]),
+  })
+  .strict();
+export type MatchChallengeSummary = z.infer<
+  typeof matchChallengeSummarySchema
+>;
+
+/** Full detail view including snapshotted conditions and overlapping window. */
+export const matchChallengeDetailSchema = matchChallengeSummarySchema.extend({
+  conditions: matchChallengeConditionsSchema,
+  overlappingWindow: overlappingWindowSchema,
+});
+export type MatchChallengeDetail = z.infer<
+  typeof matchChallengeDetailSchema
+>;
+
+/** Action input for accepting or declining a challenge. */
+export const respondToChallengeSchema = z
+  .object({
+    action: z.enum(["ACCEPT", "DECLINE"]),
+    reason: z.string().trim().max(AVAILABILITY_MESSAGE_MAX_LENGTH).optional(),
+  })
+  .strict();
+export type RespondToChallengeInput = z.infer<
+  typeof respondToChallengeSchema
+>;
