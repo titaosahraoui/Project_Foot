@@ -100,3 +100,18 @@ export function updateAvailability(
     },
   });
 }
+
+export function expireDueAvailabilities(
+  now: Date,
+  db: RepositoryContext = prisma,
+): Promise<{ count: number }> {
+  return db.teamAvailability.updateMany({
+    where: {
+      status: "OPEN",
+      OR: [{ endAt: { lte: now } }, { expiresAt: { lte: now } }],
+    },
+    data: {
+      status: "EXPIRED",
+    },
+  });
+}
