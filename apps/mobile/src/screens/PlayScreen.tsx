@@ -9,6 +9,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useNavigation } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useQuery } from "@tanstack/react-query";
 import type { Pitch } from "@footconnect/shared";
 import { colors, spacing, radii } from "@footconnect/ui";
@@ -24,11 +26,14 @@ import { PitchCard, PitchDetailModal } from "../components/pitch";
 import { useAuth } from "../lib/auth-context";
 import { api } from "../lib/api";
 import { fontFamily } from "../theme/fonts";
+import type { PlayStackParamList } from "../navigation";
 
 const FORMATS = ["5v5", "7v7", "11v11"] as const;
 const DATES = ["Today", "Tomorrow", "This Week"] as const;
 
 export function PlayScreen() {
+  const navigation =
+    useNavigation<NativeStackNavigationProp<PlayStackParamList, "PlayHome">>();
   const { user } = useAuth();
   const [selectedFormat, setSelectedFormat] = useState<string>("5v5");
   const [selectedDate, setSelectedDate] = useState<string>("Today");
@@ -61,6 +66,29 @@ export function PlayScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* Looking For Match / Availability Entry Point */}
+        <Card style={styles.matchmakingBannerCard}>
+          <View style={styles.matchmakingBannerLeft}>
+            <View style={styles.matchmakingIconWrap}>
+              <Icon name="calendar" size={20} color={colors.primaryContainer} />
+            </View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text variant="titleS" color={colors.primary}>
+                LOOKING FOR MATCH
+              </Text>
+              <Text variant="caption" color={colors.onSurfaceVariant}>
+                Set squad availability and find matching opponents in Algiers.
+              </Text>
+            </View>
+          </View>
+          <Button
+            label="Squad Availability & Windows"
+            size="sm"
+            onPress={() => navigation.navigate("LookingForMatchList")}
+            style={{ marginTop: 8 }}
+          />
+        </Card>
+
         {/* Filter Bar */}
         <Card style={styles.filterCard}>
           <View style={styles.filterHeader}>
@@ -521,5 +549,25 @@ const styles = StyleSheet.create({
   emptyPitchesCard: {
     padding: spacing.xl,
     alignItems: "center",
+  },
+  matchmakingBannerCard: {
+    backgroundColor: colors.surfaceContainer,
+    borderWidth: 1,
+    borderColor: "rgba(195, 244, 0, 0.25)",
+    padding: spacing.sm,
+    gap: spacing.xs,
+  },
+  matchmakingBannerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  matchmakingIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: radii.sm,
+    backgroundColor: "rgba(195, 244, 0, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

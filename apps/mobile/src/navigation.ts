@@ -12,9 +12,15 @@ export type SquadStackParamList = {
   Invitations: undefined;
 };
 
+export type PlayStackParamList = {
+  PlayHome: undefined;
+  LookingForMatchList: undefined;
+  LookingForMatchEditor: { teamId?: string } | undefined;
+};
+
 export type TabParamList = {
   Home: undefined;
   Squad: NavigatorScreenParams<SquadStackParamList>;
-  Play: undefined;
+  Play: NavigatorScreenParams<PlayStackParamList> | undefined;
   Profile: undefined;
 };
