@@ -25,6 +25,38 @@ export async function getTeamRating(
   };
 }
 
+export async function getTeamRatingsBatch(
+  teamIds: string[],
+  tx?: RepositoryContext,
+): Promise<Map<string, TeamCompetitiveSummary>> {
+  if (teamIds.length === 0) {
+    return new Map();
+  }
+  const records = await repo.findRatingsByTeamIds(teamIds, tx);
+  const map = new Map<string, TeamCompetitiveSummary>();
+  for (const r of records) {
+    map.set(r.teamId, {
+      rating: r.rating,
+      matchesPlayed: r.matchesPlayed,
+      wins: r.wins,
+      draws: r.draws,
+      losses: r.losses,
+    });
+  }
+  for (const id of teamIds) {
+    if (!map.has(id)) {
+      map.set(id, {
+        rating: 1000,
+        matchesPlayed: 0,
+        wins: 0,
+        draws: 0,
+        losses: 0,
+      });
+    }
+  }
+  return map;
+}
+
 export async function createInitialTeamRating(
   teamId: string,
   tx?: RepositoryContext,

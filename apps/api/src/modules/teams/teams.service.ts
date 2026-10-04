@@ -114,6 +114,24 @@ export async function getTeam(teamId: string): Promise<TeamDetail> {
   return toTeamDetail(team, rating);
 }
 
+export async function getTeamsBatch(teamIds: string[]): Promise<Map<string, TeamDetail>> {
+  if (teamIds.length === 0) return new Map();
+  const teams = await repo.findTeamsByIds(teamIds);
+  const ratings = await ratingsService.getTeamRatingsBatch(teamIds);
+  const map = new Map<string, TeamDetail>();
+  for (const t of teams) {
+    const rating = ratings.get(t.id) ?? {
+      rating: 1000,
+      matchesPlayed: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+    };
+    map.set(t.id, toTeamDetail(t, rating));
+  }
+  return map;
+}
+
 export async function getMyTeams(userId: string): Promise<TeamDetail[]> {
   const teams = await repo.findMyTeams(userId);
   return Promise.all(

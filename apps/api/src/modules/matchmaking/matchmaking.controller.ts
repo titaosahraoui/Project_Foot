@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import {
   createTeamAvailabilitySchema,
   recommendationsQuerySchema,
+  updateTeamAvailabilitySchema,
 } from "@footconnect/shared";
 import * as service from "./matchmaking.service";
 
@@ -19,6 +20,27 @@ export async function getMyAvailabilityHandler(
   res: Response,
 ): Promise<void> {
   const result = await service.listMyAvailability(req.userId!);
+  res.json(result);
+}
+
+export async function getAvailabilityHandler(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const result = await service.getAvailability(req.userId!, req.params.id!);
+  res.json(result);
+}
+
+export async function updateAvailabilityHandler(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const input = updateTeamAvailabilitySchema.parse(req.body);
+  const result = await service.updateAvailability(
+    req.userId!,
+    req.params.id!,
+    input,
+  );
   res.json(result);
 }
 

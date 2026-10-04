@@ -1,6 +1,10 @@
 import type { TeamAvailability as TeamAvailabilityRecord } from "@prisma/client";
 import {
+  AVAILABILITY_MAX_DURATION_MINUTES,
+  AVAILABILITY_MIN_DURATION_MINUTES,
+  AVAILABILITY_MIN_LEAD_TIME_HOURS,
   buildCreateTeamAvailabilitySchema,
+  buildUpdateTeamAvailabilitySchema,
   toApproximateArea,
   type CreateTeamAvailabilityInput,
   type OpponentRecommendation,
@@ -9,8 +13,9 @@ import {
   type PublicTeamAvailability,
   type RecommendedTeamSummary,
   type TeamAvailability,
+  type UpdateTeamAvailabilityInput,
 } from "@footconnect/shared";
-import type { RepositoryContext } from "../../lib/transaction";
+import { withTransaction, type RepositoryContext } from "../../lib/transaction";
 import { HttpError } from "../../middleware/error-handler";
 import * as ratingsService from "../ratings/ratings.service";
 import * as teamsService from "../teams/teams.service";
@@ -94,33 +99,63 @@ export async function createAvailability(
   const startAt = new Date(payload.startAt);
   const endAt = new Date(payload.endAt);
 
-  // 3. Enforce no overlapping OPEN windows for this team
-  const existing = await repo.listAvailabilityByTeams(
-    [payload.teamId],
-    { statuses: ["OPEN"] },
-    tx,
-  );
-  assertNoOpenOverlap({ startAt, endAt }, existing);
+  const execute = async (client: RepositoryContext) => {
+    // 3. Serialize concurrent creates for the same team via transaction-level advisory lock
+    await repo.acquireTeamAvailabilityLock(payload.teamId, client);
 
-  // 4. Persist availability record
-  const record = await repo.createAvailability(
-    {
-      teamId: payload.teamId,
-      createdById: actorId,
-      startAt,
-      endAt,
-      format: payload.format,
-      originLat: payload.origin.lat,
-      originLng: payload.origin.lng,
-      radiusKm: payload.radiusKm,
-      eloTolerance: payload.eloTolerance,
-      message: payload.message,
-      expiresAt: startAt,
-    },
-    tx,
-  );
+    // 4. Enforce no overlapping OPEN windows for this team
+    const existing = await repo.listAvailabilityByTeams(
+      [payload.teamId],
+      { statuses: ["OPEN"] },
+      client,
+    );
+    assertNoOpenOverlap({ startAt, endAt }, existing);
 
-  return toTeamAvailability(record);
+    // 5. Persist availability record
+    const record = await repo.createAvailability(
+      {
+        teamId: payload.teamId,
+        createdById: actorId,
+        startAt,
+        endAt,
+        format: payload.format,
+        originLat: payload.origin.lat,
+        originLng: payload.origin.lng,
+        radiusKm: payload.radiusKm,
+        eloTolerance: payload.eloTolerance,
+        message: payload.message,
+        expiresAt: startAt,
+      },
+      client,
+    );
+
+    return toTeamAvailability(record);
+  };
+
+  try {
+    if (tx) {
+      return await execute(tx);
+    }
+    return await withTransaction(execute);
+  } catch (err: unknown) {
+    if (err instanceof HttpError) {
+      throw err;
+    }
+    const errMessage = err instanceof Error ? err.message : String(err);
+    const errCode = (err as { code?: string })?.code;
+    if (
+      errCode === "P2002" ||
+      errCode === "P2010" ||
+      errMessage.includes("team_availabilities_no_overlapping_open") ||
+      errMessage.includes("exclusion")
+    ) {
+      throw new HttpError(
+        409,
+        "Team already has an open availability that overlaps with this time window",
+      );
+    }
+    throw err;
+  }
 }
 
 /**
@@ -137,6 +172,151 @@ export async function listMyAvailability(
   }
   const records = await repo.listAvailabilityByTeams(teamIds, {}, tx);
   return records.map(toTeamAvailability);
+}
+
+/**
+ * Retrieves a single availability for an active member of the team.
+ */
+export async function getAvailability(
+  actorId: string,
+  id: string,
+  tx?: RepositoryContext,
+): Promise<TeamAvailability> {
+  const availability = await repo.findAvailabilityById(id, tx);
+  if (!availability) {
+    throw new HttpError(404, "Availability not found");
+  }
+
+  const myTeams = await teamsService.getMyTeams(actorId);
+  const isMember = myTeams.some((t) => t.id === availability.teamId);
+  if (!isMember) {
+    throw new HttpError(403, "You do not have access to this availability");
+  }
+
+  return toTeamAvailability(availability);
+}
+
+/**
+ * Updates an OPEN team availability.
+ * Only the active captain can update.
+ * Allows adjusting format, time window, radius, Elo tolerance, or message.
+ */
+export async function updateAvailability(
+  actorId: string,
+  id: string,
+  input: UpdateTeamAvailabilityInput,
+  now: Date = new Date(),
+  tx?: RepositoryContext,
+): Promise<TeamAvailability> {
+  const availability = await repo.findAvailabilityById(id, tx);
+  if (!availability) {
+    throw new HttpError(404, "Availability not found");
+  }
+
+  await teamsService.assertActiveCaptain(availability.teamId, actorId);
+
+  if (availability.status !== "OPEN") {
+    throw new HttpError(
+      409,
+      `Cannot edit availability with status ${availability.status}`,
+    );
+  }
+
+  const schema = buildUpdateTeamAvailabilitySchema(() => now);
+  const payload = schema.parse(input);
+
+  const newStartAt = payload.startAt
+    ? new Date(payload.startAt)
+    : availability.startAt;
+  const newEndAt = payload.endAt
+    ? new Date(payload.endAt)
+    : availability.endAt;
+
+  // Validate duration if times are provided
+  const durationMinutes =
+    (newEndAt.getTime() - newStartAt.getTime()) / (60 * 1000);
+  if (
+    durationMinutes < AVAILABILITY_MIN_DURATION_MINUTES ||
+    durationMinutes > AVAILABILITY_MAX_DURATION_MINUTES
+  ) {
+    throw new HttpError(
+      400,
+      `Availability must last between ${AVAILABILITY_MIN_DURATION_MINUTES} and ${AVAILABILITY_MAX_DURATION_MINUTES} minutes`,
+    );
+  }
+
+  // If startAt is updated and changed, enforce lead time
+  if (
+    payload.startAt &&
+    newStartAt.getTime() !== availability.startAt.getTime()
+  ) {
+    const minStart =
+      now.getTime() + AVAILABILITY_MIN_LEAD_TIME_HOURS * 60 * 60 * 1000;
+    if (newStartAt.getTime() < minStart) {
+      throw new HttpError(
+        400,
+        `Availability must start at least ${AVAILABILITY_MIN_LEAD_TIME_HOURS} hours from now`,
+      );
+    }
+  }
+
+  const execute = async (client: RepositoryContext) => {
+    await repo.acquireTeamAvailabilityLock(availability.teamId, client);
+
+    const existing = await repo.listAvailabilityByTeams(
+      [availability.teamId],
+      { statuses: ["OPEN"] },
+      client,
+    );
+    assertNoOpenOverlap(
+      { startAt: newStartAt, endAt: newEndAt },
+      existing,
+      availability.id,
+    );
+
+    const updated = await repo.updateAvailability(
+      availability.id,
+      {
+        format: payload.format,
+        startAt: newStartAt,
+        endAt: newEndAt,
+        originLat: payload.origin?.lat,
+        originLng: payload.origin?.lng,
+        radiusKm: payload.radiusKm,
+        eloTolerance: payload.eloTolerance,
+        message: payload.message !== undefined ? payload.message : undefined,
+        expiresAt: newStartAt,
+      },
+      client,
+    );
+
+    return toTeamAvailability(updated);
+  };
+
+  try {
+    if (tx) {
+      return await execute(tx);
+    }
+    return await withTransaction(execute);
+  } catch (err: unknown) {
+    if (err instanceof HttpError) {
+      throw err;
+    }
+    const errMessage = err instanceof Error ? err.message : String(err);
+    const errCode = (err as { code?: string })?.code;
+    if (
+      errCode === "P2002" ||
+      errCode === "P2010" ||
+      errMessage.includes("team_availabilities_no_overlapping_open") ||
+      errMessage.includes("exclusion")
+    ) {
+      throw new HttpError(
+        409,
+        "Team already has an open availability that overlaps with this time window",
+      );
+    }
+    throw err;
+  }
 }
 
 /**
@@ -195,22 +375,25 @@ export async function getRecommendations(
   now: Date = new Date(),
   tx?: RepositoryContext,
 ): Promise<PaginatedRecommendations> {
+  // 1. Expire due availabilities before computing recommendations so DB status is fresh
+  await expireDueAvailability(now, tx);
+
   const searching = await repo.findAvailabilityById(availabilityId, tx);
   if (!searching) {
     throw new HttpError(404, "Availability not found");
   }
 
-  // 1. Authorize: requires the availability team's active captain
+  // 2. Authorize: requires the availability team's active captain
   await teamsService.assertActiveCaptain(searching.teamId, actorId);
-
-  // 2. Expire due availabilities before computing recommendations
-  await expireDueAvailability(now, tx);
 
   const page = query.page ?? 1;
   const pageSize = query.pageSize ?? 20;
 
-  // 3. If searching availability is not OPEN, return empty recommendations
-  if (searching.status !== "OPEN") {
+  // 3. If searching availability is not OPEN or is past its deadline, return empty recommendations
+  const isDue =
+    searching.endAt.getTime() <= now.getTime() ||
+    searching.expiresAt.getTime() <= now.getTime();
+  if (searching.status !== "OPEN" || isDue) {
     return { items: [], page, pageSize, total: 0 };
   }
 
@@ -238,28 +421,23 @@ export async function getRecommendations(
     return { items: [], page, pageSize, total: 0 };
   }
 
-  // 5. Fetch candidate teams and ratings concurrently
-  const candidateDetails = await Promise.all(
-    candidates.map(async (candidate) => {
-      try {
-        const [candidateTeam, candidateRating] = await Promise.all([
-          teamsService.getTeam(candidate.teamId),
-          ratingsService.getTeamRating(candidate.teamId, tx),
-        ]);
-        return { candidate, candidateTeam, candidateRating };
-      } catch {
-        return null;
-      }
-    }),
-  );
+  // 5. Batch retrieve candidate teams and ratings in single queries (O(1) queries)
+  const candidateTeamIds = Array.from(new Set(candidates.map((c) => c.teamId)));
+  const [candidateTeamsMap, candidateRatingsMap] = await Promise.all([
+    teamsService.getTeamsBatch(candidateTeamIds),
+    ratingsService.getTeamRatingsBatch(candidateTeamIds, tx),
+  ]);
 
   const eligible: OpponentRecommendation[] = [];
 
-  for (const item of candidateDetails) {
-    if (!item) continue;
-    const { candidate, candidateTeam, candidateRating } = item;
+  for (const candidate of candidates) {
+    const candidateTeam = candidateTeamsMap.get(candidate.teamId);
+    if (!candidateTeam) {
+      continue;
+    }
 
-    const candidateElo = candidateRating.rating;
+    const candidateRating = candidateRatingsMap.get(candidate.teamId);
+    const candidateElo = candidateRating?.rating ?? candidateTeam.skillRating ?? 1000;
     const candidateHasCaptain = candidateTeam.members.some(
       (m) => m.teamRole === "CAPTAIN" || m.role === "CAPTAIN",
     );
@@ -372,7 +550,11 @@ export async function getRecommendations(
     if (a.distanceKm !== b.distanceKm) {
       return a.distanceKm - b.distanceKm;
     }
-    return a.team.id.localeCompare(b.team.id);
+    const teamCmp = a.team.id.localeCompare(b.team.id);
+    if (teamCmp !== 0) {
+      return teamCmp;
+    }
+    return a.availabilityId.localeCompare(b.availabilityId);
   });
 
   // 7. Paginate

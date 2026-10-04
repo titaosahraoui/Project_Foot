@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -28,6 +28,7 @@ import {
   algiersToUtcIso,
   formatAlgiersTimeRange,
   getAlgiersNow,
+  utcToAlgiersComponents,
   validateAvailabilityInput,
 } from "../lib/algiers-time";
 import { useAuth } from "../lib/auth-context";
@@ -51,11 +52,26 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
+  const editAvailabilityId = route.params?.editAvailabilityId;
+  const initialExisting = route.params?.existingAvailability;
+
   // 1. Fetch user's teams
   const { data: myTeams, isLoading: teamsLoading } = useQuery<TeamDetail[]>({
     queryKey: ["myTeams"],
     queryFn: () => api.getMyTeams(),
   });
+
+  // Query my availability if editing and existingAvailability wasn't passed directly
+  const { data: myAvailabilities } = useQuery<TeamAvailability[]>({
+    queryKey: ["myAvailability"],
+    queryFn: () => api.getMyAvailability(),
+    enabled: Boolean(editAvailabilityId && !initialExisting),
+  });
+
+  const activeAvailability =
+    initialExisting ??
+    myAvailabilities?.find((a) => a.id === editAvailabilityId);
+  const isEditMode = Boolean(editAvailabilityId || activeAvailability);
 
   // Filter to active teams where user is captain
   const captainTeams = useMemo(() => {
@@ -70,20 +86,38 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
 
   const isCaptain = captainTeams.length > 0;
 
-  // Selected Team ID (default to route param or first captained team)
+  // Selected Team ID (default to route param, active availability, or first captained team)
   const [selectedTeamId, setSelectedTeamId] = useState<string>(() => {
-    return route.params?.teamId ?? captainTeams[0]?.id ?? "";
+    return (
+      activeAvailability?.teamId ??
+      route.params?.teamId ??
+      captainTeams[0]?.id ??
+      ""
+    );
   });
 
   // If captainTeams loads and selectedTeamId is empty, initialize it
-  if (!selectedTeamId && captainTeams.length > 0) {
-    setSelectedTeamId(captainTeams[0].id);
+  if (!selectedTeamId && (activeAvailability?.teamId || captainTeams.length > 0)) {
+    setSelectedTeamId(activeAvailability?.teamId ?? captainTeams[0]?.id ?? "");
   }
 
-  const selectedTeam = captainTeams.find((t) => t.id === selectedTeamId);
+  const selectedTeam =
+    captainTeams.find((t) => t.id === selectedTeamId) ??
+    myTeams?.find((t) => t.id === selectedTeamId);
 
   // Form State in Algiers Local Time (UTC+1)
   const defaultStart = useMemo(() => {
+    if (activeAvailability) {
+      try {
+        const algiers = utcToAlgiersComponents(activeAvailability.startAt);
+        return {
+          dateStr: algiers.dateStr,
+          timeStr: algiers.timeStr,
+        };
+      } catch {
+        // fallback
+      }
+    }
     // Current Algiers time + 7 hours (guarantees >= 6h lead time)
     const algiersFutureMs = Date.now() + ALGIERS_OFFSET_MS + 7 * 60 * 60 * 1000;
     const d = new Date(algiersFutureMs);
@@ -95,21 +129,67 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
       dateStr: `${year}-${month}-${day}`,
       timeStr: `${hours}:00`,
     };
-  }, []);
+  }, [activeAvailability]);
 
-  const [format, setFormat] = useState<MatchFormat>("FIVE_A_SIDE");
+  const [format, setFormat] = useState<MatchFormat>(() => {
+    return activeAvailability?.format ?? "FIVE_A_SIDE";
+  });
   const [dateStr, setDateStr] = useState<string>(defaultStart.dateStr);
   const [timeStr, setTimeStr] = useState<string>(defaultStart.timeStr);
-  const [durationMinutes, setDurationMinutes] = useState<number>(90);
-  const [radiusKm, setRadiusKm] = useState<number>(10);
-  const [eloTolerance, setEloTolerance] = useState<number>(150);
-  const [message, setMessage] = useState<string>("");
+  const [durationMinutes, setDurationMinutes] = useState<number>(() => {
+    if (activeAvailability) {
+      const dur = Math.round(
+        (new Date(activeAvailability.endAt).getTime() -
+          new Date(activeAvailability.startAt).getTime()) /
+          60000,
+      );
+      if (dur >= 60 && dur <= 240) return dur;
+    }
+    return 90;
+  });
+  const [radiusKm, setRadiusKm] = useState<number>(() => {
+    return activeAvailability?.radiusKm ?? 10;
+  });
+  const [eloTolerance, setEloTolerance] = useState<number>(() => {
+    return activeAvailability?.eloTolerance ?? 150;
+  });
+  const [message, setMessage] = useState<string>(() => {
+    return activeAvailability?.message ?? "";
+  });
+
+  // Track if we pre-filled once from activeAvailability (if loaded asynchronously)
+  const [hasHydratedEdit, setHasHydratedEdit] = useState(Boolean(initialExisting));
+  useEffect(() => {
+    if (activeAvailability && !hasHydratedEdit) {
+      setSelectedTeamId(activeAvailability.teamId);
+      setFormat(activeAvailability.format);
+      setRadiusKm(activeAvailability.radiusKm);
+      setEloTolerance(activeAvailability.eloTolerance);
+      setMessage(activeAvailability.message ?? "");
+      try {
+        const algiers = utcToAlgiersComponents(activeAvailability.startAt);
+        setDateStr(algiers.dateStr);
+        setTimeStr(algiers.timeStr);
+        const dur = Math.round(
+          (new Date(activeAvailability.endAt).getTime() -
+            new Date(activeAvailability.startAt).getTime()) /
+            60000,
+        );
+        if (dur >= 60 && dur <= 240) {
+          setDurationMinutes(dur);
+        }
+      } catch {
+        // fallback
+      }
+      setHasHydratedEdit(true);
+    }
+  }, [activeAvailability, hasHydratedEdit]);
 
   // Validation & Error states
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Success state with newly created availability and recommendations
+  // Success state with newly created or updated availability and recommendations
   const [createdAvailability, setCreatedAvailability] =
     useState<TeamAvailability | null>(null);
   const [createdRecs, setCreatedRecs] = useState<OpponentRecommendation[]>([]);
@@ -133,8 +213,8 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
     }
   }, [dateStr, timeStr, durationMinutes]);
 
-  // Create Availability Mutation
-  const createMutation = useMutation({
+  // Submit Availability Mutation (Create or Update)
+  const submitMutation = useMutation({
     mutationFn: async () => {
       setSubmitError(null);
 
@@ -148,6 +228,7 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
         radiusKm,
         eloTolerance,
         message: message.trim() || undefined,
+        initialStartUtcIso: activeAvailability?.startAt,
       });
 
       if (!validation.valid) {
@@ -160,33 +241,47 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
       const originLat = selectedTeam?.lat ?? user?.lat ?? 36.7538;
       const originLng = selectedTeam?.lng ?? user?.lng ?? 3.0588;
 
-      // Single UTC conversion
-      const created = await api.createAvailability({
-        teamId: selectedTeamId,
-        format,
-        startAt: validation.startUtcIso!,
-        endAt: validation.endUtcIso!,
-        origin: { lat: originLat, lng: originLng },
-        radiusKm,
-        eloTolerance,
-        message: message.trim() || undefined,
-      });
-
-      return created;
+      if (isEditMode && (editAvailabilityId || activeAvailability?.id)) {
+        const targetId = (editAvailabilityId ?? activeAvailability?.id)!;
+        const updated = await api.updateAvailability(targetId, {
+          format,
+          startAt: validation.startUtcIso,
+          endAt: validation.endUtcIso,
+          origin: { lat: originLat, lng: originLng },
+          radiusKm,
+          eloTolerance,
+          message: message.trim() || undefined,
+        });
+        return updated;
+      } else {
+        const created = await api.createAvailability({
+          teamId: selectedTeamId,
+          format,
+          startAt: validation.startUtcIso!,
+          endAt: validation.endUtcIso!,
+          origin: { lat: originLat, lng: originLng },
+          radiusKm,
+          eloTolerance,
+          message: message.trim() || undefined,
+        });
+        return created;
+      }
     },
-    onSuccess: async (created) => {
+    onSuccess: async (result) => {
       void queryClient.invalidateQueries({ queryKey: ["myAvailability"] });
-      setCreatedAvailability(created);
+      void queryClient.invalidateQueries({
+        queryKey: ["recommendations", result.id],
+      });
+      setCreatedAvailability(result);
 
-      // Explicit instruction: "Do not request recommendations until the availability create response succeeds."
+      // Fetch recommendations preview
       setLoadingRecs(true);
       try {
         const recs: PaginatedRecommendations = await api.getRecommendations(
-          created.id,
+          result.id,
         );
         setCreatedRecs(recs.items);
       } catch (err: any) {
-        // Recommendations fetch is optional / post-create preview
         setCreatedRecs([]);
       } finally {
         setLoadingRecs(false);
@@ -194,7 +289,10 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
     },
     onError: (err: any) => {
       setSubmitError(
-        err?.message ?? "Failed to create match availability. Please try again.",
+        err?.message ??
+          (isEditMode
+            ? "Failed to update match availability. Please try again."
+            : "Failed to create match availability. Please try again."),
       );
     },
   });
@@ -243,10 +341,12 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
           <Card style={styles.successCard}>
             <Icon name="check" size={40} color={colors.primaryContainer} />
             <Text variant="headlineMd" color={colors.primary}>
-              MATCH WINDOW PUBLISHED
+              {isEditMode ? "MATCH WINDOW UPDATED" : "MATCH WINDOW PUBLISHED"}
             </Text>
             <Text variant="caption" color={colors.onSurfaceVariant} style={{ textAlign: "center" }}>
-              Your availability is now live. Other teams in Algiers can match with you.
+              {isEditMode
+                ? "Your match availability adjustments have been saved."
+                : "Your availability is now live. Other teams in Algiers can match with you."}
             </Text>
 
             <View style={styles.previewBox}>
@@ -271,6 +371,7 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
                   availabilityId: createdAvailability.id,
                   teamName: selectedTeam?.name,
                   teamId: selectedTeamId,
+                  availability: createdAvailability,
                 })
               }
               style={{ marginTop: spacing.sm }}
@@ -335,7 +436,7 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
               label="Retry"
               size="sm"
               variant="ghost"
-              onPress={() => createMutation.mutate()}
+              onPress={() => submitMutation.mutate()}
             />
           </Card>
         ) : null}
@@ -343,33 +444,44 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
         {/* 1. Team Selector */}
         <Card style={styles.card}>
           <Text variant="labelSm" color={colors.onSurfaceVariant}>
-            SELECT SQUAD (CAPTAIN ONLY)
+            {isEditMode ? "SQUAD" : "SELECT SQUAD (CAPTAIN ONLY)"}
           </Text>
-          <View style={styles.chipRow}>
-            {captainTeams.map((t) => (
-              <TouchableOpacity
-                key={t.id}
-                style={[
-                  styles.chip,
-                  selectedTeamId === t.id && styles.chipActive,
-                ]}
-                onPress={() => {
-                  setSelectedTeamId(t.id);
-                  setFieldErrors((prev) => ({ ...prev, teamId: "" }));
-                }}
-                activeOpacity={0.7}
-              >
-                <Text
+          {isEditMode ? (
+            <View style={{ paddingVertical: 4 }}>
+              <Text variant="titleS" color={colors.primary}>
+                {selectedTeam?.name ?? "Selected Team"}
+              </Text>
+              <Text variant="caption" color={colors.textSecondary}>
+                Editing existing match availability window
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.chipRow}>
+              {captainTeams.map((t) => (
+                <TouchableOpacity
+                  key={t.id}
                   style={[
-                    styles.chipText,
-                    selectedTeamId === t.id && styles.chipTextActive,
+                    styles.chip,
+                    selectedTeamId === t.id && styles.chipActive,
                   ]}
+                  onPress={() => {
+                    setSelectedTeamId(t.id);
+                    setFieldErrors((prev) => ({ ...prev, teamId: "" }));
+                  }}
+                  activeOpacity={0.7}
                 >
-                  {t.name}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+                  <Text
+                    style={[
+                      styles.chipText,
+                      selectedTeamId === t.id && styles.chipTextActive,
+                    ]}
+                  >
+                    {t.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
           {fieldErrors.teamId ? (
             <Text variant="caption" color={colors.danger}>
               {fieldErrors.teamId}
@@ -596,9 +708,9 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
 
         {/* Submit Button */}
         <Button
-          label="Publish Availability Window"
-          loading={createMutation.isPending}
-          onPress={() => createMutation.mutate()}
+          label={isEditMode ? "Save Adjustments" : "Publish Availability Window"}
+          loading={submitMutation.isPending}
+          onPress={() => submitMutation.mutate()}
           style={{ marginTop: spacing.sm, marginBottom: spacing.xl }}
         />
       </ScrollView>

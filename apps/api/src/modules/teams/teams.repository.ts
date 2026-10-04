@@ -52,6 +52,11 @@ export function findTeamById(id: string, db: RepositoryContext = prisma): Promis
   return db.team.findUnique({ where: { id }, include: teamInclude });
 }
 
+export function findTeamsByIds(ids: string[], db: RepositoryContext = prisma): Promise<TeamWithMembers[]> {
+  if (ids.length === 0) return Promise.resolve([]);
+  return db.team.findMany({ where: { id: { in: ids } }, include: teamInclude });
+}
+
 export function findMyTeams(userId: string, db: RepositoryContext = prisma): Promise<TeamWithMembers[]> {
   return db.team.findMany({
     where: { members: { some: { userId, status: "ACTIVE" } } },

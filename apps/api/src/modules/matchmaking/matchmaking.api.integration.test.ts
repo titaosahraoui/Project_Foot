@@ -119,6 +119,15 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await prisma.teamAvailability.deleteMany({
+    where: { teamId: { in: [teamAId, teamBId, teamCId, teamDId] } },
+  });
+  await prisma.team.deleteMany({
+    where: { id: { in: [teamAId, teamBId, teamCId, teamDId] } },
+  });
+  await prisma.user.deleteMany({
+    where: { id: { in: [capAId, capBId, capCId, capDId, _memAId, _outsiderId] } },
+  });
   await disconnectTestDependencies();
 });
 
@@ -225,6 +234,45 @@ describe("POST /api/v1/matchmaking/availability", () => {
         origin: { lat: 36.7538, lng: 3.0588 },
       });
     expect(res.status).toBe(409);
+  });
+
+  it("rejects concurrent requests creating overlapping windows for the same team with 409", async () => {
+    // Launch two requests concurrently for the exact same team and overlapping time window
+    const start = Date.now() + 40 * HOUR_MS;
+    const end = start + 90 * MINUTE_MS;
+
+    const payload = {
+      teamId: teamBId,
+      startAt: new Date(start).toISOString(),
+      endAt: new Date(end).toISOString(),
+      format: "FIVE_A_SIDE",
+      origin: { lat: 36.7538, lng: 3.0588 },
+    };
+
+    const [res1, res2] = await Promise.all([
+      request(app)
+        .post("/api/v1/matchmaking/availability")
+        .set(authHeader(capBToken))
+        .send(payload),
+      request(app)
+        .post("/api/v1/matchmaking/availability")
+        .set(authHeader(capBToken))
+        .send(payload),
+    ]);
+
+    // Exactly one should succeed with 201, and the other must be rejected with 409
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toEqual([201, 409]);
+
+    // Ensure database only contains 1 created availability for this team in this window
+    const count = await prisma.teamAvailability.count({
+      where: {
+        teamId: teamBId,
+        status: "OPEN",
+        startAt: new Date(start),
+      },
+    });
+    expect(count).toBe(1);
   });
 });
 
@@ -337,19 +385,138 @@ describe("DELETE /api/v1/matchmaking/availability/:id", () => {
   });
 });
 
+describe("GET /api/v1/matchmaking/availability/:id", () => {
+  let availabilityId = "";
+
+  beforeAll(async () => {
+    const start = Date.now() + 50 * HOUR_MS;
+    const end = start + 90 * MINUTE_MS;
+    const created = await prisma.teamAvailability.create({
+      data: {
+        teamId: teamAId,
+        createdById: capAId,
+        startAt: new Date(start),
+        endAt: new Date(end),
+        format: "FIVE_A_SIDE",
+        originLat: 36.7538,
+        originLng: 3.0588,
+        status: "OPEN",
+        expiresAt: new Date(start),
+      },
+    });
+    availabilityId = created.id;
+  });
+
+  it("returns availability for team member with 200", async () => {
+    const res = await request(app)
+      .get(`/api/v1/matchmaking/availability/${availabilityId}`)
+      .set(authHeader(memAToken));
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(availabilityId);
+    expect(res.body.teamId).toBe(teamAId);
+  });
+
+  it("rejects outsider with 403", async () => {
+    const res = await request(app)
+      .get(`/api/v1/matchmaking/availability/${availabilityId}`)
+      .set(authHeader(outsiderToken));
+
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 404 for nonexistent availability id", async () => {
+    const res = await request(app)
+      .get(`/api/v1/matchmaking/availability/${randomUUID()}`)
+      .set(authHeader(capAToken));
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("PATCH /api/v1/matchmaking/availability/:id", () => {
+  let patchAvailId = "";
+  let patchStart = 0;
+  let patchEnd = 0;
+
+  beforeAll(async () => {
+    patchStart = Date.now() + 60 * HOUR_MS;
+    patchEnd = patchStart + 90 * MINUTE_MS;
+    const created = await prisma.teamAvailability.create({
+      data: {
+        teamId: teamAId,
+        createdById: capAId,
+        startAt: new Date(patchStart),
+        endAt: new Date(patchEnd),
+        format: "FIVE_A_SIDE",
+        originLat: 36.7538,
+        originLng: 3.0588,
+        radiusKm: 10,
+        eloTolerance: 150,
+        status: "OPEN",
+        expiresAt: new Date(patchStart),
+      },
+    });
+    patchAvailId = created.id;
+  });
+
+  it("rejects non-captain with 403", async () => {
+    const res = await request(app)
+      .patch(`/api/v1/matchmaking/availability/${patchAvailId}`)
+      .set(authHeader(memAToken))
+      .send({ radiusKm: 25 });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("allows captain to update radius, elo tolerance, format, and message without conflict on same window", async () => {
+    const res = await request(app)
+      .patch(`/api/v1/matchmaking/availability/${patchAvailId}`)
+      .set(authHeader(capAToken))
+      .send({
+        radiusKm: 25,
+        eloTolerance: 200,
+        format: "SEVEN_A_SIDE",
+        message: "Updated friendly challenge",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(patchAvailId);
+    expect(res.body.radiusKm).toBe(25);
+    expect(res.body.eloTolerance).toBe(200);
+    expect(res.body.format).toBe("SEVEN_A_SIDE");
+    expect(res.body.message).toBe("Updated friendly challenge");
+  });
+
+  it("returns 404 for nonexistent availability id", async () => {
+    const res = await request(app)
+      .patch(`/api/v1/matchmaking/availability/${randomUUID()}`)
+      .set(authHeader(capAToken))
+      .send({ radiusKm: 20 });
+
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("GET /api/v1/matchmaking/availability/:id/recommendations", { timeout: 60000 }, () => {
   let searchAvailabilityId = "";
   let eligibleAvailBId = "";
   let _farAvailCId = "";
   let _mismatchAvailDId = "";
+  let teamEId = "";
+  let uEId = "";
 
-  const recWindowStart = Date.now() + 500 * HOUR_MS;
+  const recWindowStart =
+    Date.now() + (1000 + Math.floor(Math.random() * 50000)) * HOUR_MS;
   const recWindowEnd = recWindowStart + 120 * MINUTE_MS;
 
   beforeAll(async () => {
-    // Clean up all existing OPEN availabilities in the test DB for full isolation
+    // Clean up fixture teams' existing OPEN availabilities for full isolation
     await prisma.teamAvailability.updateMany({
-      where: { status: "OPEN" },
+      where: {
+        teamId: { in: [teamAId, teamBId, teamCId, teamDId] },
+        status: "OPEN",
+      },
       data: { status: "CANCELLED" },
     });
 
@@ -532,6 +699,42 @@ describe("GET /api/v1/matchmaking/availability/:id/recommendations", { timeout: 
     expect(candidateTeamIds).not.toContain(teamDId);
   });
 
+  it("returns empty recommendations when availability is past its expiry/end deadline", async () => {
+    // Create an availability that is stored as OPEN but has past expiry deadline
+    const pastStart = Date.now() - 2 * HOUR_MS;
+    const pastEnd = Date.now() - 1 * HOUR_MS;
+    const expiredAvail = await prisma.teamAvailability.create({
+      data: {
+        teamId: teamAId,
+        createdById: capAId,
+        startAt: new Date(pastStart),
+        endAt: new Date(pastEnd),
+        format: "FIVE_A_SIDE",
+        originLat: 36.7441,
+        originLng: 3.0422,
+        radiusKm: 10,
+        eloTolerance: 150,
+        status: "OPEN",
+        expiresAt: new Date(pastStart),
+      },
+    });
+
+    const res = await request(app)
+      .get(
+        `/api/v1/matchmaking/availability/${expiredAvail.id}/recommendations`,
+      )
+      .set(authHeader(capAToken));
+
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(0);
+    expect(res.body.items).toEqual([]);
+
+    // Clean up
+    await prisma.teamAvailability.deleteMany({
+      where: { id: expiredAvail.id },
+    });
+  });
+
   it("sorts deterministically by score descending, then distance ascending, then team ID", async () => {
     // Create two more candidates with identical Elo and format, but different distances and IDs
     const start = recWindowStart;
@@ -540,12 +743,13 @@ describe("GET /api/v1/matchmaking/availability/:id/recommendations", { timeout: 
     const uE = await prisma.user.create({
       data: { email: uniqueEmail("capE"), passwordHash: password, displayName: "Captain E" },
     });
+    uEId = uE.id;
     const uEToken = signAccessToken({ userId: uE.id, roles: ["PLAYER"] });
     const resTeamE = await request(app)
       .post("/api/v1/teams")
       .set(authHeader(uEToken))
       .send({ name: `Team E ${randomUUID().slice(0, 8)}` });
-    const teamEId = resTeamE.body.id;
+    teamEId = resTeamE.body.id;
 
     // Team E: at Hydra (distance ~0 km from Team A)
     await prisma.teamAvailability.create({
@@ -622,5 +826,17 @@ describe("GET /api/v1/matchmaking/availability/:id/recommendations", { timeout: 
     expect(resP3.status).toBe(200);
     expect(resP3.body.page).toBe(3);
     expect(resP3.body.items).toHaveLength(0);
+  });
+
+  afterAll(async () => {
+    const teamIds = [teamAId, teamBId, teamCId, teamDId];
+    if (teamEId) teamIds.push(teamEId);
+    await prisma.teamAvailability.deleteMany({
+      where: { teamId: { in: teamIds } },
+    });
+    if (uEId && teamEId) {
+      await prisma.team.deleteMany({ where: { id: teamEId } });
+      await prisma.user.deleteMany({ where: { id: uEId } });
+    }
   });
 });

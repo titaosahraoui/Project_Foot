@@ -141,6 +141,65 @@ export type CreateTeamAvailabilityPayload = z.output<
 >;
 
 // ---------------------------------------------------------------------------
+// Update command
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the update-availability schema against an injectable clock.
+ * Allows updating search preferences, format, message, or time window.
+ */
+export function buildUpdateTeamAvailabilitySchema(
+  _now: () => Date = () => new Date(),
+) {
+  return z
+    .object({
+      startAt: utcDateTimeSchema.optional(),
+      endAt: utcDateTimeSchema.optional(),
+      format: matchFormatSchema.optional(),
+      origin: coordinatesSchema.optional(),
+      radiusKm: z
+        .number()
+        .int()
+        .min(AVAILABILITY_MIN_RADIUS_KM)
+        .max(AVAILABILITY_MAX_RADIUS_KM)
+        .optional(),
+      eloTolerance: z
+        .number()
+        .int()
+        .min(AVAILABILITY_MIN_ELO_TOLERANCE)
+        .max(AVAILABILITY_MAX_ELO_TOLERANCE)
+        .optional(),
+      message: z.string().trim().max(AVAILABILITY_MESSAGE_MAX_LENGTH).nullable().optional(),
+    })
+    .superRefine((data, ctx) => {
+      if (data.startAt && data.endAt) {
+        const start = Date.parse(data.startAt);
+        const end = Date.parse(data.endAt);
+        const durationMinutes = (end - start) / MINUTE_MS;
+
+        if (
+          durationMinutes < AVAILABILITY_MIN_DURATION_MINUTES ||
+          durationMinutes > AVAILABILITY_MAX_DURATION_MINUTES
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["endAt"],
+            message: `Availability must last between ${AVAILABILITY_MIN_DURATION_MINUTES} and ${AVAILABILITY_MAX_DURATION_MINUTES} minutes`,
+          });
+        }
+      }
+    });
+}
+
+export const updateTeamAvailabilitySchema = buildUpdateTeamAvailabilitySchema();
+export type UpdateTeamAvailabilityInput = z.input<
+  typeof updateTeamAvailabilitySchema
+>;
+export type UpdateTeamAvailabilityPayload = z.output<
+  typeof updateTeamAvailabilitySchema
+>;
+
+// ---------------------------------------------------------------------------
 // Responses — strict so raw coordinates or private preferences cannot leak.
 // ---------------------------------------------------------------------------
 

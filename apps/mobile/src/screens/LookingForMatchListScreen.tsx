@@ -193,6 +193,7 @@ export function LookingForMatchListScreen({ navigation }: Props) {
                     teamName: team?.name,
                     teamId: item.teamId,
                     isExpired: item.status === "EXPIRED",
+                    availability: item,
                   })
                 }
               />
