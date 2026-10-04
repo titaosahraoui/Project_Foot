@@ -13,11 +13,14 @@ import { fontMap, fontFamily } from "./src/theme/fonts";
 import { Icon, type IconName } from "./src/components/ui";
 import { api } from "./src/lib/api";
 import { AuthProvider, useAuth } from "./src/lib/auth-context";
-import type { AuthStackParamList, SquadStackParamList, TabParamList } from "./src/navigation";
+import type { AuthStackParamList, PlayStackParamList, SquadStackParamList, TabParamList } from "./src/navigation";
 import { LoginScreen } from "./src/screens/LoginScreen";
 import { RegisterScreen } from "./src/screens/RegisterScreen";
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { PlayScreen } from "./src/screens/PlayScreen";
+import { LookingForMatchListScreen } from "./src/screens/LookingForMatchListScreen";
+import { LookingForMatchEditorScreen } from "./src/screens/LookingForMatchEditorScreen";
+import { RecommendedOpponentsScreen } from "./src/screens/RecommendedOpponentsScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { TeamsListScreen } from "./src/screens/TeamsListScreen";
 import { CreateTeamScreen } from "./src/screens/CreateTeamScreen";
@@ -29,6 +32,7 @@ SplashScreen.preventAutoHideAsync().catch(() => undefined);
 const queryClient = new QueryClient();
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 const SquadStack = createNativeStackNavigator<SquadStackParamList>();
+const PlayStack = createNativeStackNavigator<PlayStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
 
 const navTheme: NavTheme = {
@@ -64,6 +68,38 @@ function SquadNavigator() {
       <SquadStack.Screen name="TeamDetail" component={TeamDetailScreen} options={{ title: "Squad Tactical" }} />
       <SquadStack.Screen name="Invitations" component={InvitationsScreen} options={{ title: "Invitations" }} />
     </SquadStack.Navigator>
+  );
+}
+
+function PlayNavigator() {
+  return (
+    <PlayStack.Navigator screenOptions={stackScreenOptions}>
+      <PlayStack.Screen
+        name="PlayHome"
+        component={PlayScreen}
+        options={{ headerShown: false }}
+      />
+      <PlayStack.Screen
+        name="LookingForMatchList"
+        component={LookingForMatchListScreen}
+        options={{ title: "Match Availability" }}
+      />
+      <PlayStack.Screen
+        name="LookingForMatchEditor"
+        component={LookingForMatchEditorScreen}
+        options={{ title: "Set Availability" }}
+      />
+      <PlayStack.Screen
+        name="RecommendedOpponents"
+        component={RecommendedOpponentsScreen}
+        options={{ title: "Matching Opponents" }}
+      />
+      <PlayStack.Screen
+        name="TeamDetail"
+        component={TeamDetailScreen as any}
+        options={{ title: "Squad Tactical" }}
+      />
+    </PlayStack.Navigator>
   );
 }
 
@@ -131,7 +167,7 @@ function Tabs() {
           },
         }}
       />
-      <Tab.Screen name="Play" component={PlayScreen} />
+      <Tab.Screen name="Play" component={PlayNavigator} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );

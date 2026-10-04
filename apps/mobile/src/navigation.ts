@@ -12,9 +12,22 @@ export type SquadStackParamList = {
   Invitations: undefined;
 };
 
+export type PlayStackParamList = {
+  PlayHome: undefined;
+  LookingForMatchList: undefined;
+  LookingForMatchEditor: { teamId?: string } | undefined;
+  RecommendedOpponents: {
+    availabilityId: string;
+    teamName?: string;
+    teamId?: string;
+    isExpired?: boolean;
+  };
+  TeamDetail: { teamId: string };
+};
+
 export type TabParamList = {
   Home: undefined;
   Squad: NavigatorScreenParams<SquadStackParamList>;
-  Play: undefined;
+  Play: NavigatorScreenParams<PlayStackParamList> | undefined;
   Profile: undefined;
 };

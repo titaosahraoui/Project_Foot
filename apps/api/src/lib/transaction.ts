@@ -7,5 +7,8 @@ export type RepositoryContext = PrismaClient | TransactionContext;
 export function withTransaction<T>(
   work: (tx: TransactionContext) => Promise<T>,
 ): Promise<T> {
-  return prisma.$transaction((tx) => work(tx));
+  return prisma.$transaction((tx) => work(tx), {
+    maxWait: 10000,
+    timeout: 20000,
+  });
 }

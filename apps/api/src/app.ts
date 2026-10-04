@@ -16,6 +16,7 @@ import { bookingsRouter } from "./modules/bookings/bookings.routes";
 import { matchesRouter } from "./modules/matches/matches.routes";
 import { socialRouter } from "./modules/social/social.routes";
 import { notificationsRouter } from "./modules/notifications/notifications.routes";
+import { matchmakingRouter } from "./modules/matchmaking/matchmaking.routes";
 
 export function createApp(): Express {
   const app = express();
@@ -37,6 +38,7 @@ export function createApp(): Express {
   api.use("/users", usersRouter);
   api.use("/teams", teamsRouter);
   api.use("/pitches", pitchesRouter);
+  api.use("/matchmaking", matchmakingRouter);
   api.use("/bookings", bookingsRouter);
   api.use("/matches", matchesRouter);
   api.use("/social", socialRouter);
