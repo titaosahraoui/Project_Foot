@@ -5,11 +5,14 @@ import type {
   AvailableSlotQuery,
   CreatePitchBlockInput,
   CreatePitchInput,
+  CreateTeamAvailabilityInput,
   CreateTeamInput,
   FormatCode,
   HealthStatus,
   Invitation,
   LoginInput,
+  PaginatedRecommendations,
+  PaginationQuery,
   Pitch,
   PitchAvailabilityRule,
   PitchBlock,
@@ -18,6 +21,7 @@ import type {
   RegisterInput,
   SetPitchAvailabilityRulesInput,
   SetTeamLineupInput,
+  TeamAvailability,
   TeamDetail,
   TeamLineup,
   TransferCaptainInput,
@@ -94,6 +98,14 @@ export interface ApiClient {
   createPitchBlock(pitchId: string, input: CreatePitchBlockInput): Promise<PitchBlock>;
   cancelPitchBlock(pitchId: string, blockId: string): Promise<void>;
   getAvailableSlots(pitchId: string, query: AvailableSlotQuery): Promise<AvailableSlot[]>;
+  // Matchmaking
+  createAvailability(input: CreateTeamAvailabilityInput): Promise<TeamAvailability>;
+  getMyAvailability(): Promise<TeamAvailability[]>;
+  cancelAvailability(id: string): Promise<TeamAvailability>;
+  getRecommendations(
+    availabilityId: string,
+    query?: PaginationQuery,
+  ): Promise<PaginatedRecommendations>;
 }
 
 /**
@@ -226,6 +238,24 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       }
       return request<AvailableSlot[]>(
         `/api/v1/pitches/${pitchId}/available-slots?${params.toString()}`,
+      );
+    },
+    // Matchmaking
+    createAvailability: (input) =>
+      post<TeamAvailability>("/api/v1/matchmaking/availability", input),
+    getMyAvailability: () =>
+      request<TeamAvailability[]>("/api/v1/matchmaking/availability/mine"),
+    cancelAvailability: (id) =>
+      request<TeamAvailability>(`/api/v1/matchmaking/availability/${id}`, {
+        method: "DELETE",
+      }),
+    getRecommendations: (availabilityId, query) => {
+      const params = new URLSearchParams();
+      if (query?.page !== undefined) params.set("page", String(query.page));
+      if (query?.pageSize !== undefined) params.set("pageSize", String(query.pageSize));
+      const qs = params.toString();
+      return request<PaginatedRecommendations>(
+        `/api/v1/matchmaking/availability/${availabilityId}/recommendations${qs ? `?${qs}` : ""}`,
       );
     },
   };

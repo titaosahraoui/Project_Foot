@@ -1,6 +1,26 @@
 import { Router } from "express";
+import { asyncHandler } from "../../middleware/async-handler";
+import { requireAuth } from "../../middleware/require-auth";
+import * as c from "./matchmaking.controller";
 
-// Mounted at /api/v1/matchmaking. Availability endpoints are registered in
-// M06-T04 and challenge endpoints in M07; until then requests fall through to
-// the standard 404 handler.
 export const matchmakingRouter: Router = Router();
+
+matchmakingRouter.use(requireAuth);
+
+// Static routes before /:id routes
+matchmakingRouter.post(
+  "/availability",
+  asyncHandler(c.createAvailabilityHandler),
+);
+matchmakingRouter.get(
+  "/availability/mine",
+  asyncHandler(c.getMyAvailabilityHandler),
+);
+matchmakingRouter.delete(
+  "/availability/:id",
+  asyncHandler(c.cancelAvailabilityHandler),
+);
+matchmakingRouter.get(
+  "/availability/:id/recommendations",
+  asyncHandler(c.getRecommendationsHandler),
+);

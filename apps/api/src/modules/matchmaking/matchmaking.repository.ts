@@ -115,3 +115,31 @@ export function expireDueAvailabilities(
     },
   });
 }
+
+export interface FindCandidateAvailabilitiesFilter {
+  excludeTeamId: string;
+  format?: MatchFormat;
+  startAt?: Date;
+  endAt?: Date;
+}
+
+export function findCandidateAvailabilities(
+  filter: FindCandidateAvailabilitiesFilter,
+  db: RepositoryContext = prisma,
+): Promise<TeamAvailability[]> {
+  const where: Prisma.TeamAvailabilityWhereInput = {
+    teamId: { not: filter.excludeTeamId },
+    status: "OPEN",
+  };
+  if (filter.format) {
+    where.format = filter.format;
+  }
+  if (filter.startAt && filter.endAt) {
+    where.startAt = { lt: filter.endAt };
+    where.endAt = { gt: filter.startAt };
+  }
+  return db.teamAvailability.findMany({
+    where,
+    orderBy: [{ startAt: "asc" }, { id: "asc" }],
+  });
+}

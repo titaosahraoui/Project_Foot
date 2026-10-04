@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { coordinatesSchema, type Coordinates } from "./common";
+import {
+  coordinatesSchema,
+  paginationQuerySchema,
+  type Coordinates,
+  type PaginationQuery,
+} from "./common";
 import { matchFormatSchema, utcDateTimeSchema } from "./domain";
 
 // ---------------------------------------------------------------------------
@@ -176,4 +181,77 @@ export const publicTeamAvailabilitySchema = z
   .strict();
 export type PublicTeamAvailability = z.infer<
   typeof publicTeamAvailabilitySchema
+>;
+
+// ---------------------------------------------------------------------------
+// Recommendations
+// ---------------------------------------------------------------------------
+
+export const recommendedTeamSummarySchema = z
+  .object({
+    id: z.string().uuid(),
+    name: z.string(),
+    logoUrl: z.string().nullable(),
+    elo: z.number(),
+  })
+  .strict();
+export type RecommendedTeamSummary = z.infer<
+  typeof recommendedTeamSummarySchema
+>;
+
+export const overlappingWindowSchema = z
+  .object({
+    startAt: z.string(),
+    endAt: z.string(),
+    durationMinutes: z.number().int().positive(),
+  })
+  .strict();
+export type OverlappingWindow = z.infer<typeof overlappingWindowSchema>;
+
+export const recommendationExplanationSchema = z
+  .object({
+    eloDifference: z.number(),
+    distanceKm: z.number(),
+    format: matchFormatSchema,
+    overlapMinutes: z.number().int().positive(),
+    opponentReliability: z.string().nullable().default(null),
+    eloScore: z.number().min(0).max(1),
+    distanceScore: z.number().min(0).max(1),
+  })
+  .strict();
+export type RecommendationExplanation = z.infer<
+  typeof recommendationExplanationSchema
+>;
+
+export const opponentRecommendationSchema = z
+  .object({
+    availabilityId: z.string().uuid(),
+    team: recommendedTeamSummarySchema,
+    teamSummary: recommendedTeamSummarySchema,
+    overlappingWindow: overlappingWindowSchema,
+    format: matchFormatSchema,
+    distanceKm: z.number(),
+    eloDifference: z.number(),
+    score: z.number().int().min(0).max(100),
+    explanation: recommendationExplanationSchema,
+    reliability: z.null(),
+  })
+  .strict();
+export type OpponentRecommendation = z.infer<
+  typeof opponentRecommendationSchema
+>;
+
+export const recommendationsQuerySchema = paginationQuerySchema;
+export type RecommendationsQuery = PaginationQuery;
+
+export const paginatedRecommendationsSchema = z
+  .object({
+    items: z.array(opponentRecommendationSchema),
+    page: z.number().int().min(1),
+    pageSize: z.number().int().min(1),
+    total: z.number().int().min(0),
+  })
+  .strict();
+export type PaginatedRecommendations = z.infer<
+  typeof paginatedRecommendationsSchema
 >;
