@@ -1,6 +1,10 @@
 import type { TeamAvailability as TeamAvailabilityRecord } from "@prisma/client";
 import {
+  AVAILABILITY_MAX_DURATION_MINUTES,
+  AVAILABILITY_MIN_DURATION_MINUTES,
+  AVAILABILITY_MIN_LEAD_TIME_HOURS,
   buildCreateTeamAvailabilitySchema,
+  buildUpdateTeamAvailabilitySchema,
   toApproximateArea,
   type CreateTeamAvailabilityInput,
   type OpponentRecommendation,
@@ -9,6 +13,7 @@ import {
   type PublicTeamAvailability,
   type RecommendedTeamSummary,
   type TeamAvailability,
+  type UpdateTeamAvailabilityInput,
 } from "@footconnect/shared";
 import { withTransaction, type RepositoryContext } from "../../lib/transaction";
 import { HttpError } from "../../middleware/error-handler";
@@ -167,6 +172,151 @@ export async function listMyAvailability(
   }
   const records = await repo.listAvailabilityByTeams(teamIds, {}, tx);
   return records.map(toTeamAvailability);
+}
+
+/**
+ * Retrieves a single availability for an active member of the team.
+ */
+export async function getAvailability(
+  actorId: string,
+  id: string,
+  tx?: RepositoryContext,
+): Promise<TeamAvailability> {
+  const availability = await repo.findAvailabilityById(id, tx);
+  if (!availability) {
+    throw new HttpError(404, "Availability not found");
+  }
+
+  const myTeams = await teamsService.getMyTeams(actorId);
+  const isMember = myTeams.some((t) => t.id === availability.teamId);
+  if (!isMember) {
+    throw new HttpError(403, "You do not have access to this availability");
+  }
+
+  return toTeamAvailability(availability);
+}
+
+/**
+ * Updates an OPEN team availability.
+ * Only the active captain can update.
+ * Allows adjusting format, time window, radius, Elo tolerance, or message.
+ */
+export async function updateAvailability(
+  actorId: string,
+  id: string,
+  input: UpdateTeamAvailabilityInput,
+  now: Date = new Date(),
+  tx?: RepositoryContext,
+): Promise<TeamAvailability> {
+  const availability = await repo.findAvailabilityById(id, tx);
+  if (!availability) {
+    throw new HttpError(404, "Availability not found");
+  }
+
+  await teamsService.assertActiveCaptain(availability.teamId, actorId);
+
+  if (availability.status !== "OPEN") {
+    throw new HttpError(
+      409,
+      `Cannot edit availability with status ${availability.status}`,
+    );
+  }
+
+  const schema = buildUpdateTeamAvailabilitySchema(() => now);
+  const payload = schema.parse(input);
+
+  const newStartAt = payload.startAt
+    ? new Date(payload.startAt)
+    : availability.startAt;
+  const newEndAt = payload.endAt
+    ? new Date(payload.endAt)
+    : availability.endAt;
+
+  // Validate duration if times are provided
+  const durationMinutes =
+    (newEndAt.getTime() - newStartAt.getTime()) / (60 * 1000);
+  if (
+    durationMinutes < AVAILABILITY_MIN_DURATION_MINUTES ||
+    durationMinutes > AVAILABILITY_MAX_DURATION_MINUTES
+  ) {
+    throw new HttpError(
+      400,
+      `Availability must last between ${AVAILABILITY_MIN_DURATION_MINUTES} and ${AVAILABILITY_MAX_DURATION_MINUTES} minutes`,
+    );
+  }
+
+  // If startAt is updated and changed, enforce lead time
+  if (
+    payload.startAt &&
+    newStartAt.getTime() !== availability.startAt.getTime()
+  ) {
+    const minStart =
+      now.getTime() + AVAILABILITY_MIN_LEAD_TIME_HOURS * 60 * 60 * 1000;
+    if (newStartAt.getTime() < minStart) {
+      throw new HttpError(
+        400,
+        `Availability must start at least ${AVAILABILITY_MIN_LEAD_TIME_HOURS} hours from now`,
+      );
+    }
+  }
+
+  const execute = async (client: RepositoryContext) => {
+    await repo.acquireTeamAvailabilityLock(availability.teamId, client);
+
+    const existing = await repo.listAvailabilityByTeams(
+      [availability.teamId],
+      { statuses: ["OPEN"] },
+      client,
+    );
+    assertNoOpenOverlap(
+      { startAt: newStartAt, endAt: newEndAt },
+      existing,
+      availability.id,
+    );
+
+    const updated = await repo.updateAvailability(
+      availability.id,
+      {
+        format: payload.format,
+        startAt: newStartAt,
+        endAt: newEndAt,
+        originLat: payload.origin?.lat,
+        originLng: payload.origin?.lng,
+        radiusKm: payload.radiusKm,
+        eloTolerance: payload.eloTolerance,
+        message: payload.message !== undefined ? payload.message : undefined,
+        expiresAt: newStartAt,
+      },
+      client,
+    );
+
+    return toTeamAvailability(updated);
+  };
+
+  try {
+    if (tx) {
+      return await execute(tx);
+    }
+    return await withTransaction(execute);
+  } catch (err: unknown) {
+    if (err instanceof HttpError) {
+      throw err;
+    }
+    const errMessage = err instanceof Error ? err.message : String(err);
+    const errCode = (err as { code?: string })?.code;
+    if (
+      errCode === "P2002" ||
+      errCode === "P2010" ||
+      errMessage.includes("team_availabilities_no_overlapping_open") ||
+      errMessage.includes("exclusion")
+    ) {
+      throw new HttpError(
+        409,
+        "Team already has an open availability that overlaps with this time window",
+      );
+    }
+    throw err;
+  }
 }
 
 /**

@@ -385,6 +385,119 @@ describe("DELETE /api/v1/matchmaking/availability/:id", () => {
   });
 });
 
+describe("GET /api/v1/matchmaking/availability/:id", () => {
+  let availabilityId = "";
+
+  beforeAll(async () => {
+    const start = Date.now() + 50 * HOUR_MS;
+    const end = start + 90 * MINUTE_MS;
+    const created = await prisma.teamAvailability.create({
+      data: {
+        teamId: teamAId,
+        createdById: capAId,
+        startAt: new Date(start),
+        endAt: new Date(end),
+        format: "FIVE_A_SIDE",
+        originLat: 36.7538,
+        originLng: 3.0588,
+        status: "OPEN",
+        expiresAt: new Date(start),
+      },
+    });
+    availabilityId = created.id;
+  });
+
+  it("returns availability for team member with 200", async () => {
+    const res = await request(app)
+      .get(`/api/v1/matchmaking/availability/${availabilityId}`)
+      .set(authHeader(memAToken));
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(availabilityId);
+    expect(res.body.teamId).toBe(teamAId);
+  });
+
+  it("rejects outsider with 403", async () => {
+    const res = await request(app)
+      .get(`/api/v1/matchmaking/availability/${availabilityId}`)
+      .set(authHeader(outsiderToken));
+
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 404 for nonexistent availability id", async () => {
+    const res = await request(app)
+      .get(`/api/v1/matchmaking/availability/${randomUUID()}`)
+      .set(authHeader(capAToken));
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("PATCH /api/v1/matchmaking/availability/:id", () => {
+  let patchAvailId = "";
+  let patchStart = 0;
+  let patchEnd = 0;
+
+  beforeAll(async () => {
+    patchStart = Date.now() + 60 * HOUR_MS;
+    patchEnd = patchStart + 90 * MINUTE_MS;
+    const created = await prisma.teamAvailability.create({
+      data: {
+        teamId: teamAId,
+        createdById: capAId,
+        startAt: new Date(patchStart),
+        endAt: new Date(patchEnd),
+        format: "FIVE_A_SIDE",
+        originLat: 36.7538,
+        originLng: 3.0588,
+        radiusKm: 10,
+        eloTolerance: 150,
+        status: "OPEN",
+        expiresAt: new Date(patchStart),
+      },
+    });
+    patchAvailId = created.id;
+  });
+
+  it("rejects non-captain with 403", async () => {
+    const res = await request(app)
+      .patch(`/api/v1/matchmaking/availability/${patchAvailId}`)
+      .set(authHeader(memAToken))
+      .send({ radiusKm: 25 });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("allows captain to update radius, elo tolerance, format, and message without conflict on same window", async () => {
+    const res = await request(app)
+      .patch(`/api/v1/matchmaking/availability/${patchAvailId}`)
+      .set(authHeader(capAToken))
+      .send({
+        radiusKm: 25,
+        eloTolerance: 200,
+        format: "SEVEN_A_SIDE",
+        message: "Updated friendly challenge",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(patchAvailId);
+    expect(res.body.radiusKm).toBe(25);
+    expect(res.body.eloTolerance).toBe(200);
+    expect(res.body.format).toBe("SEVEN_A_SIDE");
+    expect(res.body.message).toBe("Updated friendly challenge");
+  });
+
+  it("returns 404 for nonexistent availability id", async () => {
+    const res = await request(app)
+      .patch(`/api/v1/matchmaking/availability/${randomUUID()}`)
+      .set(authHeader(capAToken))
+      .send({ radiusKm: 20 });
+
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("GET /api/v1/matchmaking/availability/:id/recommendations", { timeout: 60000 }, () => {
   let searchAvailabilityId = "";
   let eligibleAvailBId = "";

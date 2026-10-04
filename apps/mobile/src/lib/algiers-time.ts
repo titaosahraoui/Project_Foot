@@ -259,6 +259,7 @@ export function validateAvailabilityInput(
     radiusKm: number;
     eloTolerance: number;
     message?: string;
+    initialStartUtcIso?: string;
   },
   now: Date = new Date(),
 ): {
@@ -282,10 +283,18 @@ export function validateAvailabilityInput(
   try {
     startUtcIso = algiersToUtcIso(params.dateStr, params.timeStr);
     const startMs = new Date(startUtcIso).getTime();
-    const minStartMs = now.getTime() + MIN_LEAD_TIME_HOURS * 60 * 60 * 1000;
+    const isUnchangedStart =
+      params.initialStartUtcIso && startUtcIso === params.initialStartUtcIso;
 
-    if (startMs < minStartMs) {
-      errors.startAt = `Must start at least ${MIN_LEAD_TIME_HOURS} hours in advance (Algiers time)`;
+    if (isUnchangedStart) {
+      if (startMs <= now.getTime()) {
+        errors.startAt = "Match window has already started or expired";
+      }
+    } else {
+      const minStartMs = now.getTime() + MIN_LEAD_TIME_HOURS * 60 * 60 * 1000;
+      if (startMs < minStartMs) {
+        errors.startAt = `Must start at least ${MIN_LEAD_TIME_HOURS} hours in advance (Algiers time)`;
+      }
     }
 
     if (

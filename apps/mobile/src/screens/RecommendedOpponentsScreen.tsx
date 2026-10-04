@@ -12,6 +12,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type {
   OpponentRecommendation,
   PaginatedRecommendations,
+  TeamAvailability,
 } from "@footconnect/shared";
 import { colors, radii, spacing } from "@footconnect/ui";
 import { Button, Card, Icon, Text } from "../components/ui";
@@ -28,8 +29,20 @@ type Props = NativeStackScreenProps<PlayStackParamList, "RecommendedOpponents">;
 const PAGE_SIZE = 10;
 
 export function RecommendedOpponentsScreen({ route, navigation }: Props) {
-  const { availabilityId, teamName, teamId, isExpired } = route.params;
+  const { availabilityId, teamName, teamId, isExpired, availability: initialAvailability } =
+    route.params;
   const [page, setPage] = useState(1);
+
+  // Fetch my availability to resolve current window data if not passed in route
+  const { data: myAvailabilities } = useQuery<TeamAvailability[]>({
+    queryKey: ["myAvailability"],
+    queryFn: () => api.getMyAvailability(),
+  });
+
+  const currentAvailability =
+    initialAvailability ??
+    myAvailabilities?.find((a) => a.id === availabilityId);
+  const effectiveTeamId = teamId ?? currentAvailability?.teamId;
 
   // TanStack Query with availabilityId in the query key
   const {
@@ -74,7 +87,7 @@ export function RecommendedOpponentsScreen({ route, navigation }: Props) {
             <Button
               label="Create New Window"
               onPress={() =>
-                navigation.navigate("LookingForMatchEditor", { teamId })
+                navigation.navigate("LookingForMatchEditor", { teamId: effectiveTeamId })
               }
               style={{ marginTop: spacing.sm, width: "100%" }}
             />
@@ -102,7 +115,11 @@ export function RecommendedOpponentsScreen({ route, navigation }: Props) {
         <TouchableOpacity
           style={styles.editBtn}
           onPress={() =>
-            navigation.navigate("LookingForMatchEditor", { teamId })
+            navigation.navigate("LookingForMatchEditor", {
+              teamId: effectiveTeamId,
+              editAvailabilityId: availabilityId,
+              existingAvailability: currentAvailability,
+            })
           }
           activeOpacity={0.7}
         >
@@ -158,7 +175,11 @@ export function RecommendedOpponentsScreen({ route, navigation }: Props) {
           ListEmptyComponent={
             <EmptyOpponentsState
               onEditAvailability={() =>
-                navigation.navigate("LookingForMatchEditor", { teamId })
+                navigation.navigate("LookingForMatchEditor", {
+                  teamId: effectiveTeamId,
+                  editAvailabilityId: availabilityId,
+                  existingAvailability: currentAvailability,
+                })
               }
               onRefresh={() => refetch()}
               isRefreshing={isRefetching}

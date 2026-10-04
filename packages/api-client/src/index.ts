@@ -27,6 +27,7 @@ import type {
   TransferCaptainInput,
   UpdatePitchInput,
   UpdateProfileInput,
+  UpdateTeamAvailabilityInput,
   UpdateTeamInput,
 } from "@footconnect/shared";
 
@@ -101,6 +102,8 @@ export interface ApiClient {
   // Matchmaking
   createAvailability(input: CreateTeamAvailabilityInput): Promise<TeamAvailability>;
   getMyAvailability(): Promise<TeamAvailability[]>;
+  getAvailability(id: string): Promise<TeamAvailability>;
+  updateAvailability(id: string, input: UpdateTeamAvailabilityInput): Promise<TeamAvailability>;
   cancelAvailability(id: string): Promise<TeamAvailability>;
   getRecommendations(
     availabilityId: string,
@@ -245,6 +248,13 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       post<TeamAvailability>("/api/v1/matchmaking/availability", input),
     getMyAvailability: () =>
       request<TeamAvailability[]>("/api/v1/matchmaking/availability/mine"),
+    getAvailability: (id) =>
+      request<TeamAvailability>(`/api/v1/matchmaking/availability/${id}`),
+    updateAvailability: (id, input) =>
+      request<TeamAvailability>(`/api/v1/matchmaking/availability/${id}`, {
+        method: "PATCH",
+        body: json(input),
+      }),
     cancelAvailability: (id) =>
       request<TeamAvailability>(`/api/v1/matchmaking/availability/${id}`, {
         method: "DELETE",

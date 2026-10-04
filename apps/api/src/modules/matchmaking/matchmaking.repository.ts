@@ -27,6 +27,14 @@ export interface CreateAvailabilityRecord {
 }
 
 export interface UpdateAvailabilityRecord {
+  format?: MatchFormat;
+  startAt?: Date;
+  endAt?: Date;
+  originLat?: number;
+  originLng?: number;
+  radiusKm?: number;
+  eloTolerance?: number;
+  message?: string | null;
   status?: AvailabilityStatus;
   expiresAt?: Date;
   matchedAt?: Date | null;
@@ -100,6 +108,14 @@ export function updateAvailability(
   return db.teamAvailability.update({
     where: { id },
     data: {
+      ...(data.format !== undefined && { format: data.format }),
+      ...(data.startAt !== undefined && { startAt: data.startAt }),
+      ...(data.endAt !== undefined && { endAt: data.endAt }),
+      ...(data.originLat !== undefined && { originLat: data.originLat }),
+      ...(data.originLng !== undefined && { originLng: data.originLng }),
+      ...(data.radiusKm !== undefined && { radiusKm: data.radiusKm }),
+      ...(data.eloTolerance !== undefined && { eloTolerance: data.eloTolerance }),
+      ...(data.message !== undefined && { message: data.message }),
       ...(data.status !== undefined && { status: data.status }),
       ...(data.expiresAt !== undefined && { expiresAt: data.expiresAt }),
       ...(data.matchedAt !== undefined && { matchedAt: data.matchedAt }),

@@ -16,6 +16,14 @@ matchmakingRouter.get(
   "/availability/mine",
   asyncHandler(c.getMyAvailabilityHandler),
 );
+matchmakingRouter.get(
+  "/availability/:id",
+  asyncHandler(c.getAvailabilityHandler),
+);
+matchmakingRouter.patch(
+  "/availability/:id",
+  asyncHandler(c.updateAvailabilityHandler),
+);
 matchmakingRouter.delete(
   "/availability/:id",
   asyncHandler(c.cancelAvailabilityHandler),

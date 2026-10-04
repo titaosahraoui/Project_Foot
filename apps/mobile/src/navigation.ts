@@ -1,4 +1,5 @@
 import type { NavigatorScreenParams } from "@react-navigation/native";
+import type { TeamAvailability } from "@footconnect/shared";
 
 export type AuthStackParamList = {
   Login: undefined;
@@ -15,12 +16,19 @@ export type SquadStackParamList = {
 export type PlayStackParamList = {
   PlayHome: undefined;
   LookingForMatchList: undefined;
-  LookingForMatchEditor: { teamId?: string } | undefined;
+  LookingForMatchEditor:
+    | {
+        teamId?: string;
+        editAvailabilityId?: string;
+        existingAvailability?: TeamAvailability;
+      }
+    | undefined;
   RecommendedOpponents: {
     availabilityId: string;
     teamName?: string;
     teamId?: string;
     isExpired?: boolean;
+    availability?: TeamAvailability;
   };
   TeamDetail: { teamId: string };
 };

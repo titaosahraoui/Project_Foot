@@ -5,10 +5,12 @@ import {
   approximateAreaSchema,
   availabilityStatusSchema,
   buildCreateTeamAvailabilitySchema,
+  buildUpdateTeamAvailabilitySchema,
   createTeamAvailabilitySchema,
   publicTeamAvailabilitySchema,
   teamAvailabilitySchema,
   toApproximateArea,
+  updateTeamAvailabilitySchema,
 } from "./index";
 
 const NOW = new Date("2026-10-04T12:00:00.000Z");
@@ -277,5 +279,60 @@ describe("availability response schemas", () => {
     expect(
       publicTeamAvailabilitySchema.safeParse({ ...publicView, ...extra }).success,
     ).toBe(false);
+  });
+});
+
+describe("updateTeamAvailabilitySchema", () => {
+  const updateSchema = buildUpdateTeamAvailabilitySchema(() => NOW);
+
+  it("exports a default updateTeamAvailabilitySchema", () => {
+    const parsed = updateTeamAvailabilitySchema.parse({ radiusKm: 20 });
+    expect(parsed.radiusKm).toBe(20);
+  });
+
+  it("accepts partial updates to radius and elo tolerance", () => {
+    const parsed = updateSchema.parse({
+      radiusKm: 25,
+      eloTolerance: 200,
+    });
+    expect(parsed.radiusKm).toBe(25);
+    expect(parsed.eloTolerance).toBe(200);
+  });
+
+  it("accepts format and message updates", () => {
+    const parsed = updateSchema.parse({
+      format: "SEVEN_A_SIDE",
+      message: "Looking for friendly competitive squads",
+    });
+    expect(parsed.format).toBe("SEVEN_A_SIDE");
+    expect(parsed.message).toBe("Looking for friendly competitive squads");
+  });
+
+  it("accepts updating startAt and endAt with valid duration", () => {
+    const start = iso(NOW.getTime() + 24 * HOUR_MS);
+    const end = iso(NOW.getTime() + 24 * HOUR_MS + 90 * MINUTE_MS);
+    const parsed = updateSchema.parse({
+      startAt: start,
+      endAt: end,
+    });
+    expect(parsed.startAt).toBe(start);
+    expect(parsed.endAt).toBe(end);
+  });
+
+  it("rejects duration under 60 minutes when updating both times", () => {
+    const start = iso(NOW.getTime() + 24 * HOUR_MS);
+    const end = iso(NOW.getTime() + 24 * HOUR_MS + 45 * MINUTE_MS);
+    const result = updateSchema.safeParse({
+      startAt: start,
+      endAt: end,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid radiusKm or eloTolerance", () => {
+    expect(updateSchema.safeParse({ radiusKm: 0 }).success).toBe(false);
+    expect(updateSchema.safeParse({ radiusKm: 55 }).success).toBe(false);
+    expect(updateSchema.safeParse({ eloTolerance: 20 }).success).toBe(false);
+    expect(updateSchema.safeParse({ eloTolerance: 600 }).success).toBe(false);
   });
 });
