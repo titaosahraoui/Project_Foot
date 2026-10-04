@@ -119,6 +119,15 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await prisma.teamAvailability.deleteMany({
+    where: { teamId: { in: [teamAId, teamBId, teamCId, teamDId] } },
+  });
+  await prisma.team.deleteMany({
+    where: { id: { in: [teamAId, teamBId, teamCId, teamDId] } },
+  });
+  await prisma.user.deleteMany({
+    where: { id: { in: [capAId, capBId, capCId, capDId, _memAId, _outsiderId] } },
+  });
   await disconnectTestDependencies();
 });
 
@@ -342,14 +351,20 @@ describe("GET /api/v1/matchmaking/availability/:id/recommendations", { timeout: 
   let eligibleAvailBId = "";
   let _farAvailCId = "";
   let _mismatchAvailDId = "";
+  let teamEId = "";
+  let uEId = "";
 
-  const recWindowStart = Date.now() + 500 * HOUR_MS;
+  const recWindowStart =
+    Date.now() + (1000 + Math.floor(Math.random() * 50000)) * HOUR_MS;
   const recWindowEnd = recWindowStart + 120 * MINUTE_MS;
 
   beforeAll(async () => {
-    // Clean up all existing OPEN availabilities in the test DB for full isolation
+    // Clean up fixture teams' existing OPEN availabilities for full isolation
     await prisma.teamAvailability.updateMany({
-      where: { status: "OPEN" },
+      where: {
+        teamId: { in: [teamAId, teamBId, teamCId, teamDId] },
+        status: "OPEN",
+      },
       data: { status: "CANCELLED" },
     });
 
@@ -540,12 +555,13 @@ describe("GET /api/v1/matchmaking/availability/:id/recommendations", { timeout: 
     const uE = await prisma.user.create({
       data: { email: uniqueEmail("capE"), passwordHash: password, displayName: "Captain E" },
     });
+    uEId = uE.id;
     const uEToken = signAccessToken({ userId: uE.id, roles: ["PLAYER"] });
     const resTeamE = await request(app)
       .post("/api/v1/teams")
       .set(authHeader(uEToken))
       .send({ name: `Team E ${randomUUID().slice(0, 8)}` });
-    const teamEId = resTeamE.body.id;
+    teamEId = resTeamE.body.id;
 
     // Team E: at Hydra (distance ~0 km from Team A)
     await prisma.teamAvailability.create({
@@ -622,5 +638,17 @@ describe("GET /api/v1/matchmaking/availability/:id/recommendations", { timeout: 
     expect(resP3.status).toBe(200);
     expect(resP3.body.page).toBe(3);
     expect(resP3.body.items).toHaveLength(0);
+  });
+
+  afterAll(async () => {
+    const teamIds = [teamAId, teamBId, teamCId, teamDId];
+    if (teamEId) teamIds.push(teamEId);
+    await prisma.teamAvailability.deleteMany({
+      where: { teamId: { in: teamIds } },
+    });
+    if (uEId && teamEId) {
+      await prisma.team.deleteMany({ where: { id: teamEId } });
+      await prisma.user.deleteMany({ where: { id: uEId } });
+    }
   });
 });
