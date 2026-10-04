@@ -20,6 +20,7 @@ import { HomeScreen } from "./src/screens/HomeScreen";
 import { PlayScreen } from "./src/screens/PlayScreen";
 import { LookingForMatchListScreen } from "./src/screens/LookingForMatchListScreen";
 import { LookingForMatchEditorScreen } from "./src/screens/LookingForMatchEditorScreen";
+import { RecommendedOpponentsScreen } from "./src/screens/RecommendedOpponentsScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { TeamsListScreen } from "./src/screens/TeamsListScreen";
 import { CreateTeamScreen } from "./src/screens/CreateTeamScreen";
@@ -87,6 +88,16 @@ function PlayNavigator() {
         name="LookingForMatchEditor"
         component={LookingForMatchEditorScreen}
         options={{ title: "Set Availability" }}
+      />
+      <PlayStack.Screen
+        name="RecommendedOpponents"
+        component={RecommendedOpponentsScreen}
+        options={{ title: "Matching Opponents" }}
+      />
+      <PlayStack.Screen
+        name="TeamDetail"
+        component={TeamDetailScreen as any}
+        options={{ title: "Squad Tactical" }}
       />
     </PlayStack.Navigator>
   );

@@ -265,9 +265,21 @@ export function LookingForMatchEditorScreen({ route, navigation }: Props) {
             </View>
 
             <Button
-              label="Back to Availability List"
-              onPress={() => navigation.navigate("LookingForMatchList")}
+              label="Explore Matching Opponents"
+              onPress={() =>
+                navigation.navigate("RecommendedOpponents", {
+                  availabilityId: createdAvailability.id,
+                  teamName: selectedTeam?.name,
+                  teamId: selectedTeamId,
+                })
+              }
               style={{ marginTop: spacing.sm }}
+            />
+            <Button
+              label="Back to Availability List"
+              variant="secondary"
+              onPress={() => navigation.navigate("LookingForMatchList")}
+              style={{ marginTop: spacing.xs }}
             />
           </Card>
 

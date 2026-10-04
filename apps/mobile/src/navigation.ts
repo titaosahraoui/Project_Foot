@@ -16,6 +16,13 @@ export type PlayStackParamList = {
   PlayHome: undefined;
   LookingForMatchList: undefined;
   LookingForMatchEditor: { teamId?: string } | undefined;
+  RecommendedOpponents: {
+    availabilityId: string;
+    teamName?: string;
+    teamId?: string;
+    isExpired?: boolean;
+  };
+  TeamDetail: { teamId: string };
 };
 
 export type TabParamList = {

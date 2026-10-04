@@ -187,6 +187,14 @@ export function LookingForMatchListScreen({ navigation }: Props) {
                 isCaptain={isCaptainOfTeam}
                 onCancel={(id) => cancelMutation.mutate(id)}
                 isCancelling={cancellingId === item.id && cancelMutation.isPending}
+                onViewRecommendations={(id) =>
+                  navigation.navigate("RecommendedOpponents", {
+                    availabilityId: id,
+                    teamName: team?.name,
+                    teamId: item.teamId,
+                    isExpired: item.status === "EXPIRED",
+                  })
+                }
               />
             );
           }}

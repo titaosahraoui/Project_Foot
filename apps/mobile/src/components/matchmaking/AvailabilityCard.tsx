@@ -23,6 +23,7 @@ export interface AvailabilityCardProps {
   isCaptain?: boolean;
   onCancel?: (id: string) => void;
   isCancelling?: boolean;
+  onViewRecommendations?: (id: string) => void;
 }
 
 export function AvailabilityCard({
@@ -31,6 +32,7 @@ export function AvailabilityCard({
   isCaptain = false,
   onCancel,
   isCancelling = false,
+  onViewRecommendations,
 }: AvailabilityCardProps) {
   const [showRecommendations, setShowRecommendations] = useState(false);
 
@@ -178,14 +180,30 @@ export function AvailabilityCard({
           />
           <TouchableOpacity
             style={styles.recToggleBtn}
-            onPress={() => setShowRecommendations((prev) => !prev)}
+            onPress={() => {
+              if (onViewRecommendations) {
+                onViewRecommendations(id);
+              } else {
+                setShowRecommendations((prev) => !prev);
+              }
+            }}
             activeOpacity={0.7}
           >
             <Text variant="labelSm" color={colors.primaryContainer}>
-              {showRecommendations ? "Hide Opponents" : "Find Opponents"}
+              {onViewRecommendations
+                ? "Find Opponents"
+                : showRecommendations
+                  ? "Hide Opponents"
+                  : "Find Opponents"}
             </Text>
             <Icon
-              name={showRecommendations ? "chevron-up" : "chevron-down"}
+              name={
+                onViewRecommendations
+                  ? "chevron-right"
+                  : showRecommendations
+                    ? "chevron-up"
+                    : "chevron-down"
+              }
               size={16}
               color={colors.primaryContainer}
             />
