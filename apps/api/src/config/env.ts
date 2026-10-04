@@ -8,6 +8,8 @@ config({ path: resolve(process.cwd(), "../../.env") });
 config();
 
 const SUPABASE_DEFAULT_URL =
+  "postgresql://postgres.apiswjgjohijnbrqkows:YPsu-ej9a5Dd8AS@aws-1-eu-west-1.pooler.supabase.com:6543/postgres?sslmode=require&pgbouncer=true";
+const SUPABASE_DEFAULT_DIRECT_URL =
   "postgresql://postgres.apiswjgjohijnbrqkows:YPsu-ej9a5Dd8AS@aws-1-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=require";
 
 function normalizeDatabaseUrl(rawUrl?: string): string {
@@ -15,6 +17,43 @@ function normalizeDatabaseUrl(rawUrl?: string): string {
     return SUPABASE_DEFAULT_URL;
   }
   // If the direct Supabase IPv6-only hostname is used, rewrite to the IPv4-compatible Supabase pooler
+  if (rawUrl.includes("db.apiswjgjohijnbrqkows.supabase.co")) {
+    try {
+      const parsed = new URL(rawUrl);
+      parsed.hostname = "aws-1-eu-west-1.pooler.supabase.com";
+      parsed.port = "6543";
+      if (parsed.username && !parsed.username.includes(".")) {
+        parsed.username = `${parsed.username}.apiswjgjohijnbrqkows`;
+      }
+      if (!parsed.searchParams.has("sslmode")) {
+        parsed.searchParams.set("sslmode", "require");
+      }
+      if (!parsed.searchParams.has("pgbouncer")) {
+        parsed.searchParams.set("pgbouncer", "true");
+      }
+      return parsed.toString();
+    } catch {
+      return rawUrl
+        .replace(
+          /postgres(:[^@]+)?@db\.apiswjgjohijnbrqkows\.supabase\.co(:5432)?/,
+          "postgres.apiswjgjohijnbrqkows$1@aws-1-eu-west-1.pooler.supabase.com:6543",
+        )
+        .concat(
+          rawUrl.includes("sslmode=")
+            ? ""
+            : rawUrl.includes("?")
+              ? "&sslmode=require&pgbouncer=true"
+              : "?sslmode=require&pgbouncer=true",
+        );
+    }
+  }
+  return rawUrl;
+}
+
+function normalizeDirectUrl(rawUrl?: string): string {
+  if (!rawUrl || rawUrl.includes("localhost") || rawUrl.includes("127.0.0.1")) {
+    return SUPABASE_DEFAULT_DIRECT_URL;
+  }
   if (rawUrl.includes("db.apiswjgjohijnbrqkows.supabase.co")) {
     try {
       const parsed = new URL(rawUrl);
@@ -61,7 +100,7 @@ const envSchema = z.object({
     .default(
       "postgresql://postgres:YPsu-ej9a5Dd8AS@db.apiswjgjohijnbrqkows.supabase.co:5432/postgres?schema=public",
     )
-    .transform(normalizeDatabaseUrl),
+    .transform(normalizeDirectUrl),
   SUPABASE_URL: z
     .string()
     .default("https://apiswjgjohijnbrqkows.supabase.co"),

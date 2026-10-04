@@ -33,19 +33,19 @@ enum PlayerPosition {
 }
 
 model User {
-  id           String      @id @default(uuid())
-  email        String      @unique
+  id           String          @id @default(uuid())
+  email        String          @unique
   passwordHash String
   displayName  String
-  roles        UserRole[]  @default([PLAYER])
+  roles        UserRole[]      @default([PLAYER])
   skillLevel   SkillLevel?
   position     PlayerPosition?
   lat          Float?
   lng          Float?
   bio          String?
   avatarUrl    String?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 
   teamMemberships     TeamMembership[]
   invitationsReceived Invitation[]     @relation("invitee")
@@ -57,14 +57,14 @@ model User {
 }
 
 model RefreshSession {
-  jti           String   @id
+  jti           String    @id
   userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt     DateTime
   revokedAt     DateTime?
   replacedByJti String?
-  createdAt     DateTime @default(now())
-  lastUsedAt    DateTime @default(now())
+  createdAt     DateTime  @default(now())
+  lastUsedAt    DateTime  @default(now())
 
   @@index([userId])
   @@index([expiresAt])
@@ -114,9 +114,9 @@ model PitchAvailabilityRule {
   id          String   @id @default(uuid())
   pitchId     String
   pitch       Pitch    @relation(fields: [pitchId], references: [id], onDelete: Cascade)
-  dayOfWeek   Int      // 0 = Sunday, 6 = Saturday
-  startMinute Int      // 0..1440
-  endMinute   Int      // 0..1440
+  dayOfWeek   Int // 0 = Sunday, 6 = Saturday
+  startMinute Int // 0..1440
+  endMinute   Int // 0..1440
   timezone    String   @default("Africa/Algiers")
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
@@ -163,19 +163,20 @@ enum TeamStatus {
 }
 
 model Team {
-  id          String           @id @default(uuid())
-  name        String
-  logoUrl     String?
-  lat         Float?
-  lng         Float?
-  status      TeamStatus       @default(ACTIVE)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  id        String     @id @default(uuid())
+  name      String
+  logoUrl   String?
+  lat       Float?
+  lng       Float?
+  status    TeamStatus @default(ACTIVE)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
-  rating      TeamRating?
-  members     TeamMembership[]
-  invitations Invitation[]
-  lineups     TeamLineup[]
+  rating         TeamRating?
+  members        TeamMembership[]
+  invitations    Invitation[]
+  lineups        TeamLineup[]
+  availabilities TeamAvailability[]
 
   @@map("teams")
 }
@@ -249,6 +250,50 @@ model Invitation {
 
   @@unique([teamId, inviteeId])
   @@map("invitations")
+}
+
+// ---- Matchmaking (owned by the matchmaking module) ----
+
+enum MatchFormat {
+  FIVE_A_SIDE
+  SEVEN_A_SIDE
+  ELEVEN_A_SIDE
+}
+
+enum AvailabilityStatus {
+  OPEN
+  MATCHED
+  CANCELLED
+  EXPIRED
+}
+
+/// A captain-published looking-for-match window. Times are persisted in UTC.
+/// The origin is private: API responses expose only an approximate area.
+/// Range rules are also enforced by CHECK constraints in the migration.
+model TeamAvailability {
+  id           String             @id @default(uuid())
+  teamId       String
+  team         Team               @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdById  String
+  startAt      DateTime
+  endAt        DateTime
+  format       MatchFormat
+  originLat    Float
+  originLng    Float
+  radiusKm     Int                @default(10)
+  eloTolerance Int                @default(150)
+  message      String?            @db.VarChar(280)
+  status       AvailabilityStatus @default(OPEN)
+  expiresAt    DateTime
+  matchedAt    DateTime?
+  cancelledAt  DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([teamId, status])
+  @@index([status, startAt, endAt])
+  @@index([status, expiresAt])
+  @@map("team_availabilities")
 }
 
 model IdempotencyRecord {
