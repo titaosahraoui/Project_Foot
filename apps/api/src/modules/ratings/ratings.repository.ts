@@ -7,6 +7,13 @@ export function findRatingByTeamId(teamId: string, db: RepositoryContext = prism
   });
 }
 
+export function findRatingsByTeamIds(teamIds: string[], db: RepositoryContext = prisma) {
+  if (teamIds.length === 0) return Promise.resolve([]);
+  return db.teamRating.findMany({
+    where: { teamId: { in: teamIds } },
+  });
+}
+
 export function createInitialRating(teamId: string, db: RepositoryContext = prisma) {
   return db.teamRating.create({
     data: {

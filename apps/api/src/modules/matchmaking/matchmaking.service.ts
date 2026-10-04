@@ -238,28 +238,23 @@ export async function getRecommendations(
     return { items: [], page, pageSize, total: 0 };
   }
 
-  // 5. Fetch candidate teams and ratings concurrently
-  const candidateDetails = await Promise.all(
-    candidates.map(async (candidate) => {
-      try {
-        const [candidateTeam, candidateRating] = await Promise.all([
-          teamsService.getTeam(candidate.teamId),
-          ratingsService.getTeamRating(candidate.teamId, tx),
-        ]);
-        return { candidate, candidateTeam, candidateRating };
-      } catch {
-        return null;
-      }
-    }),
-  );
+  // 5. Batch retrieve candidate teams and ratings in single queries (O(1) queries)
+  const candidateTeamIds = Array.from(new Set(candidates.map((c) => c.teamId)));
+  const [candidateTeamsMap, candidateRatingsMap] = await Promise.all([
+    teamsService.getTeamsBatch(candidateTeamIds),
+    ratingsService.getTeamRatingsBatch(candidateTeamIds, tx),
+  ]);
 
   const eligible: OpponentRecommendation[] = [];
 
-  for (const item of candidateDetails) {
-    if (!item) continue;
-    const { candidate, candidateTeam, candidateRating } = item;
+  for (const candidate of candidates) {
+    const candidateTeam = candidateTeamsMap.get(candidate.teamId);
+    if (!candidateTeam) {
+      continue;
+    }
 
-    const candidateElo = candidateRating.rating;
+    const candidateRating = candidateRatingsMap.get(candidate.teamId);
+    const candidateElo = candidateRating?.rating ?? candidateTeam.skillRating ?? 1000;
     const candidateHasCaptain = candidateTeam.members.some(
       (m) => m.teamRole === "CAPTAIN" || m.role === "CAPTAIN",
     );
@@ -372,7 +367,11 @@ export async function getRecommendations(
     if (a.distanceKm !== b.distanceKm) {
       return a.distanceKm - b.distanceKm;
     }
-    return a.team.id.localeCompare(b.team.id);
+    const teamCmp = a.team.id.localeCompare(b.team.id);
+    if (teamCmp !== 0) {
+      return teamCmp;
+    }
+    return a.availabilityId.localeCompare(b.availabilityId);
   });
 
   // 7. Paginate
