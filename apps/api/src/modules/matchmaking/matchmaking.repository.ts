@@ -1,5 +1,7 @@
 import type {
   AvailabilityStatus,
+  ChallengeStatus,
+  MatchChallenge,
   MatchFormat,
   Prisma,
   TeamAvailability,
@@ -166,3 +168,70 @@ export function findCandidateAvailabilities(
     orderBy: [{ startAt: "asc" }, { id: "asc" }],
   });
 }
+
+// ---- Match Challenge Persistence ----
+
+export interface CreateChallengeRecord {
+  challengerTeamId: string;
+  opponentTeamId: string;
+  challengerAvailabilityId: string;
+  opponentAvailabilityId: string;
+  organizerUserId: string;
+  format: MatchFormat;
+  startAt: Date;
+  endAt: Date;
+  originLat: number;
+  originLng: number;
+  radiusKm: number;
+  responseDeadline: Date;
+  bookingDeadline?: Date | null;
+  status?: ChallengeStatus;
+  message?: string | null;
+}
+
+export function createChallenge(
+  data: CreateChallengeRecord,
+  db: RepositoryContext = prisma,
+): Promise<MatchChallenge> {
+  return db.matchChallenge.create({
+    data: {
+      challengerTeamId: data.challengerTeamId,
+      opponentTeamId: data.opponentTeamId,
+      challengerAvailabilityId: data.challengerAvailabilityId,
+      opponentAvailabilityId: data.opponentAvailabilityId,
+      organizerUserId: data.organizerUserId,
+      format: data.format,
+      startAt: data.startAt,
+      endAt: data.endAt,
+      originLat: data.originLat,
+      originLng: data.originLng,
+      radiusKm: data.radiusKm,
+      responseDeadline: data.responseDeadline,
+      bookingDeadline: data.bookingDeadline ?? null,
+      status: data.status ?? "PENDING",
+      message: data.message ?? null,
+    },
+  });
+}
+
+export function findChallengeById(
+  id: string,
+  db: RepositoryContext = prisma,
+): Promise<MatchChallenge | null> {
+  return db.matchChallenge.findUnique({ where: { id } });
+}
+
+export function findPendingChallengeByAvailabilities(
+  challengerAvailabilityId: string,
+  opponentAvailabilityId: string,
+  db: RepositoryContext = prisma,
+): Promise<MatchChallenge | null> {
+  return db.matchChallenge.findFirst({
+    where: {
+      challengerAvailabilityId,
+      opponentAvailabilityId,
+      status: "PENDING",
+    },
+  });
+}
+

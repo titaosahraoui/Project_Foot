@@ -1,12 +1,21 @@
-import type { TeamAvailability as TeamAvailabilityRecord } from "@prisma/client";
+import { z } from "zod";
+import type {
+  MatchChallenge as MatchChallengeRecord,
+  TeamAvailability as TeamAvailabilityRecord,
+} from "@prisma/client";
 import {
   AVAILABILITY_MAX_DURATION_MINUTES,
   AVAILABILITY_MIN_DURATION_MINUTES,
   AVAILABILITY_MIN_LEAD_TIME_HOURS,
   buildCreateTeamAvailabilitySchema,
   buildUpdateTeamAvailabilitySchema,
+  calculateChallengeResponseDeadline,
+  createMatchChallengeSchema,
+  matchChallengeResponseSchema,
   toApproximateArea,
+  type CreateMatchChallengeInput,
   type CreateTeamAvailabilityInput,
+  type MatchChallengeResponse,
   type OpponentRecommendation,
   type PaginatedRecommendations,
   type PaginationQuery,
@@ -15,6 +24,11 @@ import {
   type TeamAvailability,
   type UpdateTeamAvailabilityInput,
 } from "@footconnect/shared";
+import {
+  hashIdempotencyRequest,
+  readIdempotentResult,
+  storeIdempotentResult,
+} from "../../lib/idempotency";
 import { withTransaction, type RepositoryContext } from "../../lib/transaction";
 import { HttpError } from "../../middleware/error-handler";
 import * as ratingsService from "../ratings/ratings.service";
@@ -564,3 +578,371 @@ export async function getRecommendations(
 
   return { items, page, pageSize, total };
 }
+
+// ---------------------------------------------------------------------------
+// Match Challenge Lifecycle (Milestone 07)
+// ---------------------------------------------------------------------------
+
+export function toMatchChallengeResponse(
+  record: MatchChallengeRecord,
+): MatchChallengeResponse {
+  const result: MatchChallengeResponse = {
+    id: record.id,
+    challengerTeamId: record.challengerTeamId,
+    opponentTeamId: record.opponentTeamId,
+    challengerAvailabilityId: record.challengerAvailabilityId,
+    opponentAvailabilityId: record.opponentAvailabilityId,
+    organizerUserId: record.organizerUserId,
+    format: record.format,
+    startAt: record.startAt.toISOString(),
+    endAt: record.endAt.toISOString(),
+    approximateArea: toApproximateArea({
+      lat: record.originLat,
+      lng: record.originLng,
+    }),
+    radiusKm: record.radiusKm,
+    responseDeadline: record.responseDeadline.toISOString(),
+    bookingDeadline: isoOrNull(record.bookingDeadline),
+    status: record.status,
+    message: record.message ?? null,
+    respondedAt: isoOrNull(record.respondedAt),
+    cancelledAt: isoOrNull(record.cancelledAt),
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+  return matchChallengeResponseSchema.parse(result);
+}
+
+function isZodError(
+  error: unknown,
+): error is z.ZodError | { name: "ZodError"; issues: z.ZodIssue[] } {
+  if (error instanceof z.ZodError) return true;
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { name?: unknown; issues?: unknown };
+  return candidate.name === "ZodError" && Array.isArray(candidate.issues);
+}
+
+/**
+ * Creates a match challenge between two open, eligible availability windows.
+ * Requires actor to captain the challenger. Opponent must have an active captain.
+ * Computes canonical overlap snapshot and locked response deadline.
+ * Idempotent: repeated calls with matching input return the same challenge.
+ * Does not modify availability rows on send.
+ */
+export async function createChallenge(
+  actorId: string,
+  input: CreateMatchChallengeInput,
+  now: Date = new Date(),
+  txOrIdempotencyKey?: RepositoryContext | string,
+  maybeIdempotencyKey?: string,
+): Promise<MatchChallengeResponse> {
+  let tx: RepositoryContext | undefined;
+  let idempotencyKey: string | undefined;
+
+  if (typeof txOrIdempotencyKey === "string") {
+    idempotencyKey = txOrIdempotencyKey;
+  } else {
+    tx = txOrIdempotencyKey;
+    idempotencyKey = maybeIdempotencyKey;
+  }
+
+  let parsedInput: CreateMatchChallengeInput;
+  try {
+    parsedInput = createMatchChallengeSchema.parse(input);
+  } catch (err) {
+    if (isZodError(err)) {
+      throw new HttpError(
+        422,
+        err.issues.map((i) => i.message).join("; "),
+        "CONDITIONS_VIOLATION",
+        { issues: err.issues },
+      );
+    }
+    throw err;
+  }
+
+  // 1. Check idempotency record first (fast return on retry)
+  const scope = "matchmaking:challenge:create";
+  const key =
+    idempotencyKey ??
+    `${parsedInput.challengerAvailabilityId}:${parsedInput.opponentAvailabilityId}`;
+  const requestPayload = {
+    actorId,
+    challengerAvailabilityId: parsedInput.challengerAvailabilityId,
+    opponentAvailabilityId: parsedInput.opponentAvailabilityId,
+    message: parsedInput.message ?? null,
+  };
+  const requestHash = hashIdempotencyRequest(requestPayload);
+
+  const cached = await readIdempotentResult(actorId, scope, key);
+  if (cached) {
+    if (cached.requestHash !== requestHash) {
+      throw new HttpError(
+        409,
+        "Idempotency key was already used for a different request",
+        "CONFLICT",
+        { scope, key },
+      );
+    }
+    return cached.responseBody as MatchChallengeResponse;
+  }
+
+  // 2. Fetch both availability rows
+  const [challengerAvail, opponentAvail] = await Promise.all([
+    repo.findAvailabilityById(parsedInput.challengerAvailabilityId, tx),
+    repo.findAvailabilityById(parsedInput.opponentAvailabilityId, tx),
+  ]);
+
+  if (!challengerAvail || !opponentAvail) {
+    throw new HttpError(404, "Availability not found");
+  }
+
+  // 3. Authorize actor: actor must be active captain of the challenger team
+  await teamsService.assertActiveCaptain(challengerAvail.teamId, actorId);
+
+  // 4. Reject self-challenge
+  if (
+    challengerAvail.teamId === opponentAvail.teamId ||
+    (parsedInput.opponentTeamId &&
+      parsedInput.opponentTeamId === challengerAvail.teamId) ||
+    (parsedInput.challengerTeamId &&
+      parsedInput.opponentTeamId &&
+      parsedInput.challengerTeamId === parsedInput.opponentTeamId)
+  ) {
+    throw new HttpError(
+      422,
+      "Cannot challenge own team",
+      "CONDITIONS_VIOLATION",
+    );
+  }
+
+  if (
+    parsedInput.challengerTeamId &&
+    parsedInput.challengerTeamId !== challengerAvail.teamId
+  ) {
+    throw new HttpError(
+      422,
+      "Challenger team does not match availability",
+      "CONDITIONS_VIOLATION",
+    );
+  }
+  if (
+    parsedInput.opponentTeamId &&
+    parsedInput.opponentTeamId !== opponentAvail.teamId
+  ) {
+    throw new HttpError(
+      422,
+      "Opponent team does not match availability",
+      "CONDITIONS_VIOLATION",
+    );
+  }
+
+  // 5. Verify both availability rows are OPEN and not expired (stale recommendation)
+  if (challengerAvail.status !== "OPEN" || opponentAvail.status !== "OPEN") {
+    throw new HttpError(
+      409,
+      "Availability window is no longer open",
+      "CONFLICT",
+    );
+  }
+
+  if (
+    challengerAvail.endAt.getTime() <= now.getTime() ||
+    challengerAvail.expiresAt.getTime() <= now.getTime() ||
+    opponentAvail.endAt.getTime() <= now.getTime() ||
+    opponentAvail.expiresAt.getTime() <= now.getTime()
+  ) {
+    throw new HttpError(
+      409,
+      "Availability window has expired",
+      "CONFLICT",
+    );
+  }
+
+  // 6. Check eligibility under exact recommendation rules
+  const [challengerTeam, opponentTeam] = await Promise.all([
+    teamsService.getTeam(challengerAvail.teamId),
+    teamsService.getTeam(opponentAvail.teamId),
+  ]);
+  const [challengerRating, opponentRating] = await Promise.all([
+    ratingsService.getTeamRating(challengerAvail.teamId, tx),
+    ratingsService.getTeamRating(opponentAvail.teamId, tx),
+  ]);
+
+  if (challengerTeam.status !== "ACTIVE" || opponentTeam.status !== "ACTIVE") {
+    throw new HttpError(422, "Both teams must be active", "CONDITIONS_VIOLATION");
+  }
+
+  const opponentHasCaptain = opponentTeam.members.some(
+    (m) => m.teamRole === "CAPTAIN" || m.role === "CAPTAIN",
+  );
+  if (!opponentHasCaptain) {
+    throw new HttpError(
+      422,
+      "Opponent team has no active captain",
+      "CONDITIONS_VIOLATION",
+    );
+  }
+
+  const eligibility = checkRecommendationEligibility(
+    {
+      team: {
+        id: challengerTeam.id,
+        isActive: challengerTeam.status === "ACTIVE",
+        hasActiveCaptain: true,
+        elo: challengerRating.rating,
+      },
+      availability: {
+        status: challengerAvail.status,
+        format: challengerAvail.format,
+        startAt: challengerAvail.startAt,
+        endAt: challengerAvail.endAt,
+        origin: { lat: challengerAvail.originLat, lng: challengerAvail.originLng },
+        radiusKm: challengerAvail.radiusKm,
+        eloTolerance: challengerAvail.eloTolerance,
+      },
+    },
+    {
+      team: {
+        id: opponentTeam.id,
+        isActive: opponentTeam.status === "ACTIVE",
+        hasActiveCaptain: opponentHasCaptain,
+        elo: opponentRating.rating,
+      },
+      availability: {
+        status: opponentAvail.status,
+        format: opponentAvail.format,
+        startAt: opponentAvail.startAt,
+        endAt: opponentAvail.endAt,
+        origin: { lat: opponentAvail.originLat, lng: opponentAvail.originLng },
+        radiusKm: opponentAvail.radiusKm,
+        eloTolerance: opponentAvail.eloTolerance,
+      },
+    },
+  );
+
+  if (!eligibility.eligible) {
+    throw new HttpError(
+      422,
+      `Incompatible match conditions: ${eligibility.reason}`,
+      "CONDITIONS_VIOLATION",
+    );
+  }
+
+  // 7. Canonical overlap snapshot
+  const overlapStart = new Date(
+    Math.max(challengerAvail.startAt.getTime(), opponentAvail.startAt.getTime()),
+  );
+  const overlapEnd = new Date(
+    Math.min(challengerAvail.endAt.getTime(), opponentAvail.endAt.getTime()),
+  );
+
+  const responseDeadline = calculateChallengeResponseDeadline(now, overlapStart);
+
+  const execute = async (client: RepositoryContext) => {
+    // Acquire advisory lock on the challenger team to serialize concurrent requests
+    await repo.acquireTeamAvailabilityLock(challengerAvail.teamId, client);
+
+    // Double-check idempotency record inside transaction
+    const inTxCached = await readIdempotentResult(actorId, scope, key);
+    if (inTxCached) {
+      if (inTxCached.requestHash !== requestHash) {
+        throw new HttpError(
+          409,
+          "Idempotency key was already used for a different request",
+          "CONFLICT",
+          { scope, key },
+        );
+      }
+      return inTxCached.responseBody as MatchChallengeResponse;
+    }
+
+    // Check duplicate pending challenge between these availability rows
+    const existingPending = await repo.findPendingChallengeByAvailabilities(
+      challengerAvail.id,
+      opponentAvail.id,
+      client,
+    );
+    if (existingPending) {
+      throw new HttpError(
+        409,
+        "A pending challenge already exists between these availability windows",
+        "CONFLICT",
+      );
+    }
+
+    // Persist challenge: snapshotted agreed conditions, responseDeadline computed, bookingDeadline null.
+    // Note: Availability state is NOT modified on send.
+    const created = await repo.createChallenge(
+      {
+        challengerTeamId: challengerAvail.teamId,
+        opponentTeamId: opponentAvail.teamId,
+        challengerAvailabilityId: challengerAvail.id,
+        opponentAvailabilityId: opponentAvail.id,
+        organizerUserId: actorId,
+        format: challengerAvail.format,
+        startAt: overlapStart,
+        endAt: overlapEnd,
+        originLat: challengerAvail.originLat,
+        originLng: challengerAvail.originLng,
+        radiusKm: Math.min(challengerAvail.radiusKm, opponentAvail.radiusKm),
+        responseDeadline,
+        bookingDeadline: null,
+        status: "PENDING",
+        message: parsedInput.message ?? null,
+      },
+      client,
+    );
+
+    const challengeResponse = toMatchChallengeResponse(created);
+
+    await storeIdempotentResult(
+      {
+        actorId,
+        scope,
+        key,
+        requestHash,
+        resourceType: "MatchChallenge",
+        resourceId: created.id,
+        responseStatus: 201,
+        responseBody: challengeResponse,
+        expiresAt: responseDeadline,
+      },
+      client,
+    );
+
+    return challengeResponse;
+  };
+
+  try {
+    if (tx) {
+      return await execute(tx);
+    }
+    return await withTransaction(execute);
+  } catch (err: unknown) {
+    if (err instanceof HttpError) {
+      throw err;
+    }
+    const errMessage = err instanceof Error ? err.message : String(err);
+    const errCode = (err as { code?: string })?.code;
+    if (
+      errCode === "P2002" ||
+      errMessage.includes("match_challenges_pending_pair_unique")
+    ) {
+      throw new HttpError(
+        409,
+        "A pending challenge already exists between these availability windows",
+        "CONFLICT",
+      );
+    }
+    if (errMessage.includes("match_challenges_different_teams_check")) {
+      throw new HttpError(
+        422,
+        "Cannot challenge own team",
+        "CONDITIONS_VIOLATION",
+      );
+    }
+    throw err;
+  }
+}
+
