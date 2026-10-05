@@ -3,9 +3,10 @@ import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from "rea
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { loginSchema } from "@footconnect/shared";
+import { getLoginErrorMessage, loginSchema } from "@footconnect/shared";
 import { colors, gradients, spacing } from "@footconnect/ui";
 import { useAuth } from "../lib/auth-context";
+import { apiBaseUrl } from "../lib/api";
 import { Button, Input, Logo, Text } from "../components/ui";
 import type { AuthStackParamList } from "../navigation";
 
@@ -28,8 +29,8 @@ export function LoginScreen({ navigation }: Props) {
     setSubmitting(true);
     try {
       await login(parsed.data);
-    } catch {
-      setError("Invalid credentials.");
+    } catch (loginError) {
+      setError(getLoginErrorMessage(loginError, apiBaseUrl));
     } finally {
       setSubmitting(false);
     }
@@ -67,6 +68,12 @@ export function LoginScreen({ navigation }: Props) {
                 No account? <Text color={colors.brand}>Create one</Text>
               </Text>
             </Pressable>
+
+            {__DEV__ ? (
+              <Text variant="caption" color={colors.textMuted} style={styles.devApi}>
+                API: {apiBaseUrl}
+              </Text>
+            ) : null}
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -81,4 +88,5 @@ const styles = StyleSheet.create({
   sub: { marginBottom: spacing.lg },
   form: { gap: spacing.md, marginBottom: spacing.lg },
   link: { alignItems: "center" },
+  devApi: { textAlign: "center", marginTop: spacing.sm },
 });

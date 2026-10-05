@@ -23,7 +23,36 @@ export function createApp(): Express {
 
   app.use(helmet());
   const allowedOrigins = env.CORS_ORIGIN.split(",").map((o) => o.trim());
-  app.use(cors({ origin: allowedOrigins, credentials: true }));
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+        if (env.NODE_ENV === "development") {
+          try {
+            const host = new URL(origin).hostname;
+            if (
+              host === "localhost" ||
+              host === "127.0.0.1" ||
+              host.startsWith("192.168.") ||
+              host.startsWith("10.") ||
+              /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+              host.endsWith(".ngrok-free.app") ||
+              host.endsWith(".loca.lt") ||
+              host.endsWith(".trycloudflare.com")
+            ) {
+              return callback(null, true);
+            }
+          } catch {
+            // fall through
+          }
+        }
+        callback(null, false);
+      },
+      credentials: true,
+    }),
+  );
   app.use(express.json());
   app.use(cookieParser());
   app.use(requestId);
