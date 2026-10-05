@@ -495,3 +495,21 @@ export const respondToChallengeSchema = z
 export type RespondToChallengeInput = z.infer<
   typeof respondToChallengeSchema
 >;
+
+export const matchChallengesQuerySchema = paginationQuerySchema.extend({
+  teamId: z.string().uuid().optional(),
+  status: challengeStatusSchema.optional(),
+});
+export type MatchChallengesQuery = z.infer<typeof matchChallengesQuerySchema>;
+
+export const paginatedMatchChallengesSchema = z
+  .object({
+    items: z.array(matchChallengeSummarySchema),
+    page: z.number().int().min(1),
+    pageSize: z.number().int().min(1),
+    total: z.number().int().min(0),
+  })
+  .strict();
+export type PaginatedMatchChallenges = z.infer<
+  typeof paginatedMatchChallengesSchema
+>;

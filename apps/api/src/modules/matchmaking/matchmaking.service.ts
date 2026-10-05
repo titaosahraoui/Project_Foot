@@ -12,12 +12,19 @@ import {
   calculateChallengeBookingDeadline,
   calculateChallengeResponseDeadline,
   createMatchChallengeSchema,
+  matchChallengeDetailSchema,
   matchChallengeResponseSchema,
+  matchChallengeSummarySchema,
   toApproximateArea,
+  type ChallengeAction,
   type CreateMatchChallengeInput,
   type CreateTeamAvailabilityInput,
+  type MatchChallengeDetail,
   type MatchChallengeResponse,
+  type MatchChallengeSummary,
+  type MatchChallengesQuery,
   type OpponentRecommendation,
+  type PaginatedMatchChallenges,
   type PaginatedRecommendations,
   type PaginationQuery,
   type PublicTeamAvailability,
@@ -1195,4 +1202,399 @@ export async function expireDueChallenges(
   tx?: RepositoryContext,
 ): Promise<{ count: number }> {
   return repo.expireDueChallenges(now, tx);
+}
+
+export function computeChallengeAvailableActions(
+  challenge: MatchChallengeRecord,
+  viewerId: string,
+  now: Date,
+  isOpponentCaptain: boolean,
+): ChallengeAction[] {
+  const isOrganizer = challenge.organizerUserId === viewerId;
+  const isExpired =
+    challenge.status === "EXPIRED" ||
+    challenge.startAt.getTime() <= now.getTime() ||
+    (challenge.status === "PENDING" &&
+      challenge.responseDeadline.getTime() <= now.getTime()) ||
+    (challenge.status === "ACCEPTED" &&
+      challenge.bookingDeadline !== null &&
+      challenge.bookingDeadline.getTime() <= now.getTime());
+
+  if (
+    isExpired ||
+    challenge.status === "DECLINED" ||
+    challenge.status === "CANCELLED"
+  ) {
+    return [];
+  }
+
+  const actions: ChallengeAction[] = [];
+  if (challenge.status === "PENDING") {
+    if (isOpponentCaptain) {
+      actions.push("ACCEPT", "DECLINE");
+    }
+    if (isOrganizer) {
+      actions.push("CANCEL");
+    }
+  } else if (challenge.status === "ACCEPTED") {
+    if (isOrganizer) {
+      actions.push("CANCEL");
+    }
+  }
+
+  return actions;
+}
+
+export function toMatchChallengeSummary(
+  record: MatchChallengeRecord,
+  challengerTeam: RecommendedTeamSummary,
+  opponentTeam: RecommendedTeamSummary,
+  availableActions: ChallengeAction[],
+): MatchChallengeSummary {
+  return matchChallengeSummarySchema.parse({
+    id: record.id,
+    challengerTeamId: record.challengerTeamId,
+    opponentTeamId: record.opponentTeamId,
+    challengerTeam,
+    opponentTeam,
+    challengerAvailabilityId: record.challengerAvailabilityId,
+    opponentAvailabilityId: record.opponentAvailabilityId,
+    organizerUserId: record.organizerUserId,
+    format: record.format,
+    startAt: record.startAt.toISOString(),
+    endAt: record.endAt.toISOString(),
+    approximateArea: toApproximateArea({
+      lat: record.originLat,
+      lng: record.originLng,
+    }),
+    radiusKm: record.radiusKm,
+    responseDeadline: record.responseDeadline.toISOString(),
+    bookingDeadline: isoOrNull(record.bookingDeadline),
+    status: record.status,
+    message: record.message ?? null,
+    respondedAt: isoOrNull(record.respondedAt),
+    cancelledAt: isoOrNull(record.cancelledAt),
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+    availableActions,
+  });
+}
+
+export function toMatchChallengeDetail(
+  record: MatchChallengeRecord,
+  challengerTeam: RecommendedTeamSummary,
+  opponentTeam: RecommendedTeamSummary,
+  availableActions: ChallengeAction[],
+): MatchChallengeDetail {
+  const summary = toMatchChallengeSummary(
+    record,
+    challengerTeam,
+    opponentTeam,
+    availableActions,
+  );
+  return matchChallengeDetailSchema.parse({
+    ...summary,
+    conditions: {
+      format: record.format,
+      startAt: record.startAt.toISOString(),
+      endAt: record.endAt.toISOString(),
+      approximateArea: summary.approximateArea,
+      radiusKm: record.radiusKm,
+    },
+    overlappingWindow: {
+      startAt: record.startAt.toISOString(),
+      endAt: record.endAt.toISOString(),
+      durationMinutes: Math.round(
+        (record.endAt.getTime() - record.startAt.getTime()) / 60000,
+      ),
+    },
+  });
+}
+
+/**
+ * Retrieves a challenge's full detail for an authorized viewer (member of either team).
+ * Computes available actions for the viewer based on role and challenge state.
+ */
+export async function getChallengeDetail(
+  actorId: string,
+  challengeId: string,
+  now: Date = new Date(),
+  tx?: RepositoryContext,
+): Promise<MatchChallengeDetail> {
+  // Sync expired challenges first
+  await expireDueChallenges(now, tx);
+
+  const challenge = await repo.findChallengeById(challengeId, tx);
+  if (!challenge) {
+    throw new HttpError(404, "Challenge not found");
+  }
+
+  const [challengerTeam, opponentTeam] = await Promise.all([
+    teamsService.getTeam(challenge.challengerTeamId),
+    teamsService.getTeam(challenge.opponentTeamId),
+  ]);
+
+  const isChallengerMember = challengerTeam.members.some(
+    (m) => m.userId === actorId,
+  );
+  const isOpponentMember = opponentTeam.members.some(
+    (m) => m.userId === actorId,
+  );
+
+  if (!isChallengerMember && !isOpponentMember) {
+    throw new HttpError(
+      403,
+      "You do not have access to this challenge",
+      "FORBIDDEN",
+    );
+  }
+
+  const isOpponentCaptain = opponentTeam.members.some(
+    (m) =>
+      m.userId === actorId &&
+      (m.teamRole === "CAPTAIN" || m.role === "CAPTAIN"),
+  );
+
+  const [challengerRating, opponentRating] = await Promise.all([
+    ratingsService.getTeamRating(challenge.challengerTeamId, tx),
+    ratingsService.getTeamRating(challenge.opponentTeamId, tx),
+  ]);
+
+  const challengerSummary: RecommendedTeamSummary = {
+    id: challengerTeam.id,
+    name: challengerTeam.name,
+    logoUrl: challengerTeam.logoUrl,
+    elo: challengerRating.rating,
+  };
+
+  const opponentSummary: RecommendedTeamSummary = {
+    id: opponentTeam.id,
+    name: opponentTeam.name,
+    logoUrl: opponentTeam.logoUrl,
+    elo: opponentRating.rating,
+  };
+
+  const availableActions = computeChallengeAvailableActions(
+    challenge,
+    actorId,
+    now,
+    isOpponentCaptain,
+  );
+
+  return toMatchChallengeDetail(
+    challenge,
+    challengerSummary,
+    opponentSummary,
+    availableActions,
+  );
+}
+
+/**
+ * Lists inbox challenges (challenges received by the teams the actor belongs to).
+ */
+export async function listInboxChallenges(
+  actorId: string,
+  query: MatchChallengesQuery = { page: 1, pageSize: 20 },
+  now: Date = new Date(),
+  tx?: RepositoryContext,
+): Promise<PaginatedMatchChallenges> {
+  await expireDueChallenges(now, tx);
+
+  const myTeams = await teamsService.getMyTeams(actorId);
+  const myTeamIds = myTeams.map((t) => t.id);
+
+  if (myTeamIds.length === 0) {
+    return {
+      items: [],
+      page: query.page ?? 1,
+      pageSize: query.pageSize ?? 20,
+      total: 0,
+    };
+  }
+
+  let targetTeamIds = myTeamIds;
+  if (query.teamId) {
+    if (!myTeamIds.includes(query.teamId)) {
+      throw new HttpError(
+        403,
+        "You do not have access to this team's inbox",
+        "FORBIDDEN",
+      );
+    }
+    targetTeamIds = [query.teamId];
+  }
+
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? 20;
+
+  const { items: records, total } = await repo.findInboxChallenges(
+    {
+      teamIds: targetTeamIds,
+      status: query.status,
+      page,
+      pageSize,
+    },
+    tx,
+  );
+
+  if (records.length === 0) {
+    return { items: [], page, pageSize, total };
+  }
+
+  const allTeamIds = Array.from(
+    new Set(records.flatMap((r) => [r.challengerTeamId, r.opponentTeamId])),
+  );
+  const [teamsMap, ratingsMap] = await Promise.all([
+    teamsService.getTeamsBatch(allTeamIds),
+    ratingsService.getTeamRatingsBatch(allTeamIds, tx),
+  ]);
+
+  const items: MatchChallengeSummary[] = records.map((record) => {
+    const chTeam = teamsMap.get(record.challengerTeamId);
+    const opTeam = teamsMap.get(record.opponentTeamId);
+    const chRating = ratingsMap.get(record.challengerTeamId);
+    const opRating = ratingsMap.get(record.opponentTeamId);
+
+    const chSummary: RecommendedTeamSummary = {
+      id: record.challengerTeamId,
+      name: chTeam?.name ?? "Unknown Team",
+      logoUrl: chTeam?.logoUrl ?? null,
+      elo: chRating?.rating ?? 1200,
+    };
+
+    const opSummary: RecommendedTeamSummary = {
+      id: record.opponentTeamId,
+      name: opTeam?.name ?? "Unknown Team",
+      logoUrl: opTeam?.logoUrl ?? null,
+      elo: opRating?.rating ?? 1200,
+    };
+
+    const isOpponentCaptain =
+      opTeam?.members.some(
+        (m) =>
+          m.userId === actorId &&
+          (m.teamRole === "CAPTAIN" || m.role === "CAPTAIN"),
+      ) ?? false;
+
+    const availableActions = computeChallengeAvailableActions(
+      record,
+      actorId,
+      now,
+      isOpponentCaptain,
+    );
+
+    return toMatchChallengeSummary(
+      record,
+      chSummary,
+      opSummary,
+      availableActions,
+    );
+  });
+
+  return { items, page, pageSize, total };
+}
+
+/**
+ * Lists outbox challenges (challenges sent by the teams the actor belongs to).
+ */
+export async function listOutboxChallenges(
+  actorId: string,
+  query: MatchChallengesQuery = { page: 1, pageSize: 20 },
+  now: Date = new Date(),
+  tx?: RepositoryContext,
+): Promise<PaginatedMatchChallenges> {
+  await expireDueChallenges(now, tx);
+
+  const myTeams = await teamsService.getMyTeams(actorId);
+  const myTeamIds = myTeams.map((t) => t.id);
+
+  if (myTeamIds.length === 0) {
+    return {
+      items: [],
+      page: query.page ?? 1,
+      pageSize: query.pageSize ?? 20,
+      total: 0,
+    };
+  }
+
+  let targetTeamIds = myTeamIds;
+  if (query.teamId) {
+    if (!myTeamIds.includes(query.teamId)) {
+      throw new HttpError(
+        403,
+        "You do not have access to this team's outbox",
+        "FORBIDDEN",
+      );
+    }
+    targetTeamIds = [query.teamId];
+  }
+
+  const page = query.page ?? 1;
+  const pageSize = query.pageSize ?? 20;
+
+  const { items: records, total } = await repo.findOutboxChallenges(
+    {
+      teamIds: targetTeamIds,
+      status: query.status,
+      page,
+      pageSize,
+    },
+    tx,
+  );
+
+  if (records.length === 0) {
+    return { items: [], page, pageSize, total };
+  }
+
+  const allTeamIds = Array.from(
+    new Set(records.flatMap((r) => [r.challengerTeamId, r.opponentTeamId])),
+  );
+  const [teamsMap, ratingsMap] = await Promise.all([
+    teamsService.getTeamsBatch(allTeamIds),
+    ratingsService.getTeamRatingsBatch(allTeamIds, tx),
+  ]);
+
+  const items: MatchChallengeSummary[] = records.map((record) => {
+    const chTeam = teamsMap.get(record.challengerTeamId);
+    const opTeam = teamsMap.get(record.opponentTeamId);
+    const chRating = ratingsMap.get(record.challengerTeamId);
+    const opRating = ratingsMap.get(record.opponentTeamId);
+
+    const chSummary: RecommendedTeamSummary = {
+      id: record.challengerTeamId,
+      name: chTeam?.name ?? "Unknown Team",
+      logoUrl: chTeam?.logoUrl ?? null,
+      elo: chRating?.rating ?? 1200,
+    };
+
+    const opSummary: RecommendedTeamSummary = {
+      id: record.opponentTeamId,
+      name: opTeam?.name ?? "Unknown Team",
+      logoUrl: opTeam?.logoUrl ?? null,
+      elo: opRating?.rating ?? 1200,
+    };
+
+    const isOpponentCaptain =
+      opTeam?.members.some(
+        (m) =>
+          m.userId === actorId &&
+          (m.teamRole === "CAPTAIN" || m.role === "CAPTAIN"),
+      ) ?? false;
+
+    const availableActions = computeChallengeAvailableActions(
+      record,
+      actorId,
+      now,
+      isOpponentCaptain,
+    );
+
+    return toMatchChallengeSummary(
+      record,
+      chSummary,
+      opSummary,
+      availableActions,
+    );
+  });
+
+  return { items, page, pageSize, total };
 }

@@ -330,3 +330,58 @@ export function expireDueChallenges(
     },
   });
 }
+
+export interface ListChallengesFilter {
+  teamIds: string[];
+  status?: ChallengeStatus;
+  page?: number;
+  pageSize?: number;
+}
+
+export async function findInboxChallenges(
+  filter: ListChallengesFilter,
+  db: RepositoryContext = prisma,
+): Promise<{ items: MatchChallenge[]; total: number }> {
+  const page = Math.max(1, filter.page ?? 1);
+  const pageSize = Math.max(1, filter.pageSize ?? 20);
+  const where: Prisma.MatchChallengeWhereInput = {
+    opponentTeamId: { in: filter.teamIds },
+  };
+  if (filter.status) {
+    where.status = filter.status;
+  }
+  const [total, items] = await Promise.all([
+    db.matchChallenge.count({ where }),
+    db.matchChallenge.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+  ]);
+  return { items, total };
+}
+
+export async function findOutboxChallenges(
+  filter: ListChallengesFilter,
+  db: RepositoryContext = prisma,
+): Promise<{ items: MatchChallenge[]; total: number }> {
+  const page = Math.max(1, filter.page ?? 1);
+  const pageSize = Math.max(1, filter.pageSize ?? 20);
+  const where: Prisma.MatchChallengeWhereInput = {
+    challengerTeamId: { in: filter.teamIds },
+  };
+  if (filter.status) {
+    where.status = filter.status;
+  }
+  const [total, items] = await Promise.all([
+    db.matchChallenge.count({ where }),
+    db.matchChallenge.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+  ]);
+  return { items, total };
+}
