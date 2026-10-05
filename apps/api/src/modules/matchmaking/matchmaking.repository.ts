@@ -235,3 +235,98 @@ export function findPendingChallengeByAvailabilities(
   });
 }
 
+export async function acquireAvailabilityLock(
+  availabilityId: string,
+  db: RepositoryContext = prisma,
+): Promise<void> {
+  await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`team_availability_id:${availabilityId}`}))`;
+}
+
+export interface UpdateChallengeRecord {
+  status?: ChallengeStatus;
+  respondedAt?: Date | null;
+  cancelledAt?: Date | null;
+  bookingDeadline?: Date | null;
+}
+
+export function updateChallenge(
+  id: string,
+  data: UpdateChallengeRecord,
+  db: RepositoryContext = prisma,
+): Promise<MatchChallenge> {
+  return db.matchChallenge.update({
+    where: { id },
+    data: {
+      ...(data.status !== undefined && { status: data.status }),
+      ...(data.respondedAt !== undefined && { respondedAt: data.respondedAt }),
+      ...(data.cancelledAt !== undefined && { cancelledAt: data.cancelledAt }),
+      ...(data.bookingDeadline !== undefined && { bookingDeadline: data.bookingDeadline }),
+    },
+  });
+}
+
+export function matchAvailabilities(
+  ids: string[],
+  matchedAt: Date,
+  db: RepositoryContext = prisma,
+): Promise<{ count: number }> {
+  return db.teamAvailability.updateMany({
+    where: {
+      id: { in: ids },
+      status: "OPEN",
+    },
+    data: {
+      status: "MATCHED",
+      matchedAt,
+    },
+  });
+}
+
+export function expireOtherPendingChallenges(
+  activeChallengeId: string,
+  availabilityIds: string[],
+  db: RepositoryContext = prisma,
+): Promise<{ count: number }> {
+  return db.matchChallenge.updateMany({
+    where: {
+      id: { not: activeChallengeId },
+      status: "PENDING",
+      OR: [
+        { challengerAvailabilityId: { in: availabilityIds } },
+        { opponentAvailabilityId: { in: availabilityIds } },
+      ],
+    },
+    data: {
+      status: "EXPIRED",
+    },
+  });
+}
+
+export function expireDueChallenges(
+  now: Date,
+  db: RepositoryContext = prisma,
+): Promise<{ count: number }> {
+  return db.matchChallenge.updateMany({
+    where: {
+      OR: [
+        {
+          status: "PENDING",
+          OR: [
+            { responseDeadline: { lte: now } },
+            { startAt: { lte: now } },
+          ],
+        },
+        {
+          status: "ACCEPTED",
+          OR: [
+            { bookingDeadline: { lte: now } },
+            { startAt: { lte: now } },
+          ],
+        },
+      ],
+    },
+    data: {
+      status: "EXPIRED",
+    },
+  });
+}

@@ -9,6 +9,7 @@ import {
   AVAILABILITY_MIN_LEAD_TIME_HOURS,
   buildCreateTeamAvailabilitySchema,
   buildUpdateTeamAvailabilitySchema,
+  calculateChallengeBookingDeadline,
   calculateChallengeResponseDeadline,
   createMatchChallengeSchema,
   matchChallengeResponseSchema,
@@ -946,3 +947,252 @@ export async function createChallenge(
   }
 }
 
+/**
+ * Accepts a match challenge.
+ * Only the opponent captain may accept.
+ * Acceptance atomically:
+ * - Sets both availability rows to MATCHED
+ * - Stores respondedAt
+ * - Computes bookingDeadline
+ * - Sets every other PENDING challenge referencing either matched availability row to EXPIRED.
+ * If either availability was matched by another accepted challenge, returns 409 and leaves all rows unchanged.
+ * Repeat calls return the current state without duplicate side effects.
+ */
+export async function acceptChallenge(
+  actorId: string,
+  challengeId: string,
+  now: Date = new Date(),
+  tx?: RepositoryContext,
+): Promise<MatchChallengeResponse> {
+  const challenge = await repo.findChallengeById(challengeId, tx);
+  if (!challenge) {
+    throw new HttpError(404, "Challenge not found");
+  }
+
+  // Only the opponent captain accepts
+  await teamsService.assertActiveCaptain(challenge.opponentTeamId, actorId);
+
+  // Repeat commands return current state without duplicate side effects
+  if (challenge.status === "ACCEPTED") {
+    return toMatchChallengeResponse(challenge);
+  }
+
+  if (challenge.status !== "PENDING") {
+    throw new HttpError(
+      409,
+      `Cannot accept challenge with status ${challenge.status}`,
+      "CONFLICT",
+    );
+  }
+
+  if (
+    challenge.responseDeadline.getTime() <= now.getTime() ||
+    challenge.startAt.getTime() <= now.getTime()
+  ) {
+    throw new HttpError(409, "Challenge has expired", "CONFLICT");
+  }
+
+  const execute = async (client: RepositoryContext) => {
+    // Acquire deterministic advisory locks on both availability IDs
+    const sortedAvailIds = [
+      challenge.challengerAvailabilityId,
+      challenge.opponentAvailabilityId,
+    ].sort();
+    for (const availId of sortedAvailIds) {
+      await repo.acquireAvailabilityLock(availId, client);
+    }
+
+    const [challengerAvail, opponentAvail] = await Promise.all([
+      repo.findAvailabilityById(challenge.challengerAvailabilityId, client),
+      repo.findAvailabilityById(challenge.opponentAvailabilityId, client),
+    ]);
+
+    if (
+      !challengerAvail ||
+      !opponentAvail ||
+      challengerAvail.status !== "OPEN" ||
+      opponentAvail.status !== "OPEN"
+    ) {
+      throw new HttpError(
+        409,
+        "Availability has already been matched or closed by another challenge",
+        "CONFLICT",
+      );
+    }
+
+    // Atomically set both availability rows MATCHED
+    const matchResult = await repo.matchAvailabilities(
+      [challenge.challengerAvailabilityId, challenge.opponentAvailabilityId],
+      now,
+      client,
+    );
+
+    if (matchResult.count !== 2) {
+      throw new HttpError(
+        409,
+        "Availability has already been matched or closed by another challenge",
+        "CONFLICT",
+      );
+    }
+
+    const bookingDeadline = calculateChallengeBookingDeadline(
+      now,
+      challenge.startAt,
+    );
+
+    const updatedChallenge = await repo.updateChallenge(
+      challenge.id,
+      {
+        status: "ACCEPTED",
+        respondedAt: now,
+        bookingDeadline,
+      },
+      client,
+    );
+
+    // Set every other PENDING challenge referencing either matched availability row to EXPIRED
+    await repo.expireOtherPendingChallenges(
+      challenge.id,
+      [challenge.challengerAvailabilityId, challenge.opponentAvailabilityId],
+      client,
+    );
+
+    return toMatchChallengeResponse(updatedChallenge);
+  };
+
+  if (tx) {
+    return await execute(tx);
+  }
+  return await withTransaction(execute);
+}
+
+/**
+ * Declines a match challenge.
+ * Only the opponent captain may decline.
+ * Repeat calls return current state without duplicate side effects.
+ * Does not change unrelated rows.
+ */
+export async function declineChallenge(
+  actorId: string,
+  challengeId: string,
+  now: Date = new Date(),
+  tx?: RepositoryContext,
+): Promise<MatchChallengeResponse> {
+  const challenge = await repo.findChallengeById(challengeId, tx);
+  if (!challenge) {
+    throw new HttpError(404, "Challenge not found");
+  }
+
+  // Only the opponent captain accepts/declines
+  await teamsService.assertActiveCaptain(challenge.opponentTeamId, actorId);
+
+  // Repeat commands return current state without duplicate side effects
+  if (challenge.status === "DECLINED") {
+    return toMatchChallengeResponse(challenge);
+  }
+
+  if (challenge.status !== "PENDING") {
+    throw new HttpError(
+      409,
+      `Cannot decline challenge with status ${challenge.status}`,
+      "CONFLICT",
+    );
+  }
+
+  if (
+    challenge.responseDeadline.getTime() <= now.getTime() ||
+    challenge.startAt.getTime() <= now.getTime()
+  ) {
+    throw new HttpError(409, "Challenge has expired", "CONFLICT");
+  }
+
+  const updated = await repo.updateChallenge(
+    challenge.id,
+    {
+      status: "DECLINED",
+      respondedAt: now,
+    },
+    tx,
+  );
+
+  return toMatchChallengeResponse(updated);
+}
+
+/**
+ * Cancels a match challenge.
+ * Only the organizer cancels PENDING or ACCEPTED before a confirmed booking.
+ * Repeat calls return current state without duplicate side effects.
+ * Does not change unrelated rows.
+ */
+export async function cancelChallenge(
+  actorId: string,
+  challengeId: string,
+  now: Date = new Date(),
+  tx?: RepositoryContext,
+): Promise<MatchChallengeResponse> {
+  const challenge = await repo.findChallengeById(challengeId, tx);
+  if (!challenge) {
+    throw new HttpError(404, "Challenge not found");
+  }
+
+  // Only the organizer cancels
+  if (challenge.organizerUserId !== actorId) {
+    throw new HttpError(
+      403,
+      "Only the challenge organizer can cancel this challenge",
+      "FORBIDDEN",
+    );
+  }
+
+  // Repeat commands return current state without duplicate side effects
+  if (challenge.status === "CANCELLED") {
+    return toMatchChallengeResponse(challenge);
+  }
+
+  if (challenge.status !== "PENDING" && challenge.status !== "ACCEPTED") {
+    throw new HttpError(
+      409,
+      `Cannot cancel challenge with status ${challenge.status}`,
+      "CONFLICT",
+    );
+  }
+
+  if (challenge.status === "PENDING") {
+    if (
+      challenge.responseDeadline.getTime() <= now.getTime() ||
+      challenge.startAt.getTime() <= now.getTime()
+    ) {
+      throw new HttpError(409, "Challenge has expired", "CONFLICT");
+    }
+  } else if (challenge.status === "ACCEPTED") {
+    if (
+      (challenge.bookingDeadline &&
+        challenge.bookingDeadline.getTime() <= now.getTime()) ||
+      challenge.startAt.getTime() <= now.getTime()
+    ) {
+      throw new HttpError(409, "Challenge has expired", "CONFLICT");
+    }
+  }
+
+  const updated = await repo.updateChallenge(
+    challenge.id,
+    {
+      status: "CANCELLED",
+      cancelledAt: now,
+    },
+    tx,
+  );
+
+  return toMatchChallengeResponse(updated);
+}
+
+/**
+ * Expires challenges whose response or booking deadline has passed.
+ * Does not change unrelated rows.
+ */
+export async function expireDueChallenges(
+  now: Date = new Date(),
+  tx?: RepositoryContext,
+): Promise<{ count: number }> {
+  return repo.expireDueChallenges(now, tx);
+}
