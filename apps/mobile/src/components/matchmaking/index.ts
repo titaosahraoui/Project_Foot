@@ -8,3 +8,5 @@ export { OpponentCard } from "./OpponentCard";
 export type { OpponentCardProps } from "./OpponentCard";
 export { EmptyOpponentsState } from "./EmptyOpponentsState";
 export type { EmptyOpponentsStateProps } from "./EmptyOpponentsState";
+export { ChallengeCard } from "./ChallengeCard";
+export type { ChallengeCardProps } from "./ChallengeCard";

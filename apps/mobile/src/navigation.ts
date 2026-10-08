@@ -30,6 +30,13 @@ export type PlayStackParamList = {
     isExpired?: boolean;
     availability?: TeamAvailability;
   };
+  SendChallengeConfirmation: {
+    challengerAvailability: TeamAvailability;
+    recommendation: import("@footconnect/shared").OpponentRecommendation;
+  };
+  ChallengeInbox: { teamId?: string } | undefined;
+  ChallengeOutbox: { teamId?: string } | undefined;
+  ChallengeDetail: { challengeId: string };
   TeamDetail: { teamId: string };
 };
 

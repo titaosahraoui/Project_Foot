@@ -21,6 +21,10 @@ import { PlayScreen } from "./src/screens/PlayScreen";
 import { LookingForMatchListScreen } from "./src/screens/LookingForMatchListScreen";
 import { LookingForMatchEditorScreen } from "./src/screens/LookingForMatchEditorScreen";
 import { RecommendedOpponentsScreen } from "./src/screens/RecommendedOpponentsScreen";
+import { SendChallengeConfirmationScreen } from "./src/screens/SendChallengeConfirmationScreen";
+import { ChallengeInboxScreen } from "./src/screens/ChallengeInboxScreen";
+import { ChallengeOutboxScreen } from "./src/screens/ChallengeOutboxScreen";
+import { ChallengeDetailScreen } from "./src/screens/ChallengeDetailScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { TeamsListScreen } from "./src/screens/TeamsListScreen";
 import { CreateTeamScreen } from "./src/screens/CreateTeamScreen";
@@ -93,6 +97,26 @@ function PlayNavigator() {
         name="RecommendedOpponents"
         component={RecommendedOpponentsScreen}
         options={{ title: "Matching Opponents" }}
+      />
+      <PlayStack.Screen
+        name="SendChallengeConfirmation"
+        component={SendChallengeConfirmationScreen}
+        options={{ title: "Confirm Challenge" }}
+      />
+      <PlayStack.Screen
+        name="ChallengeInbox"
+        component={ChallengeInboxScreen}
+        options={{ title: "Challenge Inbox" }}
+      />
+      <PlayStack.Screen
+        name="ChallengeOutbox"
+        component={ChallengeOutboxScreen}
+        options={{ title: "Sent Challenges" }}
+      />
+      <PlayStack.Screen
+        name="ChallengeDetail"
+        component={ChallengeDetailScreen}
+        options={{ title: "Match Challenge" }}
       />
       <PlayStack.Screen
         name="TeamDetail"
