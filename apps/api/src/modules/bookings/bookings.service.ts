@@ -7,6 +7,8 @@ import type {
 import { HttpError } from "../../middleware/error-handler";
 import * as repo from "./bookings.repository";
 
+export * from "./booking-compatibility";
+
 export function toBookingDto(booking: repo.BookingWithRelations | any): BookingDto {
   return {
     id: booking.id,
