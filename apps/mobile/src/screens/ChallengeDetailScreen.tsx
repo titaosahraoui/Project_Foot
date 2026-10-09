@@ -36,6 +36,9 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
     "ACCEPT" | "DECLINE" | "CANCEL" | null
   >(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [lastAction, setLastAction] = useState<
+    "ACCEPT" | "DECLINE" | "CANCEL" | null
+  >(null);
 
   // Retain idempotency keys per user action intent across retries
   const { idempotencyKey: acceptKey } = useIdempotencyKey();
@@ -66,6 +69,7 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
   const handleAccept = async () => {
     if (actionInProgress) return;
     setActionInProgress("ACCEPT");
+    setLastAction("ACCEPT");
     setActionError(null);
 
     try {
@@ -77,6 +81,8 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
           ? err.message
           : "Failed to accept challenge. Please check your network and retry.";
       setActionError(msg);
+      // Automatically refresh challenge state in case of stale state or expiry
+      void refetch();
     } finally {
       setActionInProgress(null);
     }
@@ -87,6 +93,7 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
 
     const executeDecline = async () => {
       setActionInProgress("DECLINE");
+      setLastAction("DECLINE");
       setActionError(null);
 
       try {
@@ -98,6 +105,7 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
             ? err.message
             : "Failed to decline challenge. Please retry.";
         setActionError(msg);
+        void refetch();
       } finally {
         setActionInProgress(null);
       }
@@ -130,6 +138,7 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
 
     const executeCancel = async () => {
       setActionInProgress("CANCEL");
+      setLastAction("CANCEL");
       setActionError(null);
 
       try {
@@ -141,6 +150,7 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
             ? err.message
             : "Failed to cancel challenge. Please retry.";
         setActionError(msg);
+        void refetch();
       } finally {
         setActionInProgress(null);
       }
@@ -463,7 +473,7 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
         </Card>
       ) : null}
 
-      {/* Error Callout */}
+      {/* Error / Offline Retry Callout */}
       {actionError ? (
         <Card style={styles.actionErrorCard}>
           <Icon name="alert-triangle" size={20} color={colors.danger} />
@@ -475,6 +485,20 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
               {actionError}
             </Text>
           </View>
+          {lastAction ? (
+            <Button
+              label="Retry"
+              size="sm"
+              variant="secondary"
+              onPress={() => {
+                if (lastAction === "ACCEPT") void handleAccept();
+                else if (lastAction === "DECLINE") void handleDecline();
+                else if (lastAction === "CANCEL") void handleCancel();
+              }}
+              disabled={actionInProgress !== null}
+              style={{ width: 80 }}
+            />
+          ) : null}
         </Card>
       ) : null}
 
@@ -559,15 +583,15 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
             />
           ) : null}
         </View>
-      ) : (
-        /* Members see read-only state */
+      ) : isPending ? (
+        /* Members see read-only state during pending challenge */
         <View style={styles.readOnlyNoteWrap}>
           <Icon name="info" size={14} color={colors.onSurfaceVariant} />
           <Text variant="caption" color={colors.onSurfaceVariant}>
             Read-only squad view. Only team captains can manage challenge responses.
           </Text>
         </View>
-      )}
+      ) : null}
     </ScrollView>
   );
 }
@@ -611,17 +635,18 @@ const styles = StyleSheet.create({
   statusLabelRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: spacing.xs,
   },
   statusDot: {
     width: 8,
     height: 8,
-    borderRadius: radii.pill,
+    borderRadius: 4,
   },
   matchupCard: {
     backgroundColor: colors.surfaceContainer,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.06)",
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    paddingVertical: spacing.lg,
   },
   teamsRow: {
     flexDirection: "row",
@@ -631,26 +656,26 @@ const styles = StyleSheet.create({
   teamCol: {
     flex: 1,
     alignItems: "center",
-    gap: 4,
+    gap: 6,
   },
   teamName: {
     textAlign: "center",
-    maxWidth: 110,
   },
   vsBox: {
+    paddingHorizontal: spacing.sm,
     alignItems: "center",
-    justifyContent: "center",
     gap: 4,
-    paddingHorizontal: spacing.xs,
   },
   vsText: {
-    fontFamily: fontFamily.headline,
+    fontFamily: fontFamily.display,
     fontSize: 22,
     color: colors.primaryContainer,
   },
   conditionsCard: {
     gap: spacing.md,
     backgroundColor: colors.surfaceContainer,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
   },
   conditionItem: {
     flexDirection: "row",
@@ -660,6 +685,8 @@ const styles = StyleSheet.create({
   deadlinesCard: {
     gap: spacing.sm,
     backgroundColor: colors.surfaceContainer,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
   },
   deadlineRow: {
     flexDirection: "row",
@@ -669,6 +696,8 @@ const styles = StyleSheet.create({
   messageCard: {
     gap: spacing.xs,
     backgroundColor: colors.surfaceContainer,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primaryContainer,
   },
   actionErrorCard: {
     flexDirection: "row",
@@ -677,23 +706,24 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceContainerHigh,
     borderLeftWidth: 3,
     borderLeftColor: colors.danger,
+    padding: spacing.md,
   },
   pitchSection: {
-    gap: 6,
-    marginTop: spacing.xs,
+    gap: spacing.xs,
+    marginTop: spacing.sm,
   },
   pitchNote: {
     textAlign: "center",
   },
   actionsContainer: {
     gap: spacing.sm,
-    marginTop: spacing.xs,
+    marginTop: spacing.sm,
   },
   readOnlyNoteWrap: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.md,
   },
 });
