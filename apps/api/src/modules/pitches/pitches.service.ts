@@ -17,6 +17,7 @@ import {
   UpdatePitchInput,
 } from "@footconnect/shared";
 import { HttpError } from "../../middleware/error-handler";
+import { getBlockingBookingRangesForPitch } from "../bookings/bookings.service";
 import { computeAvailableSlots } from "./inventory";
 import * as repo from "./pitches.repository";
 import type { PitchWithRulesAndBlocks } from "./pitches.repository";
@@ -272,6 +273,13 @@ export async function getAvailableSlots(
   const rules = await repo.findAvailabilityRules(pitchId);
   const blocks = await repo.findActivePitchBlocks(pitchId, from, to);
 
+  // Batched lookup for blocking bookings on this pitch within [from, to] through bookings.service
+  const bookingRanges = await getBlockingBookingRangesForPitch(pitchId, from, to);
+  const combinedExtraBlocks: BlockingRange[] = [
+    ...(extraBlocks ?? []),
+    ...bookingRanges,
+  ];
+
   return computeAvailableSlots({
     hourlyRate: {
       amountMinor: pitch.priceAmountMinor,
@@ -282,7 +290,7 @@ export async function getAvailableSlots(
     from,
     to,
     durationMinutes: query.durationMinutes ?? 60,
-    extraBlocks,
+    extraBlocks: combinedExtraBlocks,
   });
 }
 

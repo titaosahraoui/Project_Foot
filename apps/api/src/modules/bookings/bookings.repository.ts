@@ -6,6 +6,7 @@ import type {
 } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import type { RepositoryContext } from "../../lib/transaction";
+import { HttpError } from "../../middleware/error-handler";
 
 export interface CreateBookingData {
   pitchId: string;
@@ -46,6 +47,13 @@ export interface ListBookingsFilter {
   take?: number;
 }
 
+export interface FindBlockingBookingRangesFilter {
+  pitchId?: string;
+  pitchIds?: string[];
+  from: Date;
+  to: Date;
+}
+
 const bookingInclude = {
   pitch: true,
   challengerTeam: true,
@@ -57,30 +65,56 @@ export type BookingWithRelations = Prisma.BookingGetPayload<{
   include: typeof bookingInclude;
 }>;
 
-export function createBooking(
+export function isBookingCollisionError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  const code = (err as { code?: string })?.code;
+  return (
+    code === "23P01" ||
+    code === "P2010" ||
+    code === "P2002" ||
+    msg.includes("bookings_pitch_time_exclusion") ||
+    msg.includes("exclusion constraint") ||
+    msg.includes("violates exclusion constraint") ||
+    msg.includes("23P01")
+  );
+}
+
+export async function createBooking(
   data: CreateBookingData,
   db: RepositoryContext = prisma,
 ): Promise<Booking> {
-  return db.booking.create({
-    data: {
-      pitchId: data.pitchId,
-      challengeId: data.challengeId,
-      organizerUserId: data.organizerUserId,
-      challengerTeamId: data.challengerTeamId,
-      opponentTeamId: data.opponentTeamId,
-      startAt: data.startAt,
-      endAt: data.endAt,
-      priceAmountMinor: data.priceAmountMinor,
-      currency: data.currency ?? "DZD",
-      status: data.status ?? "PENDING_OWNER_CONFIRMATION",
-      paymentStatus: data.paymentStatus ?? "UNPAID",
-      ownerResponseDeadline: data.ownerResponseDeadline,
-      confirmedAt: data.confirmedAt ?? null,
-      declinedAt: data.declinedAt ?? null,
-      cancelledAt: data.cancelledAt ?? null,
-      expiresAt: data.expiresAt ?? null,
-    },
-  });
+  try {
+    return await db.booking.create({
+      data: {
+        pitchId: data.pitchId,
+        challengeId: data.challengeId,
+        organizerUserId: data.organizerUserId,
+        challengerTeamId: data.challengerTeamId,
+        opponentTeamId: data.opponentTeamId,
+        startAt: data.startAt,
+        endAt: data.endAt,
+        priceAmountMinor: data.priceAmountMinor,
+        currency: data.currency ?? "DZD",
+        status: data.status ?? "PENDING_OWNER_CONFIRMATION",
+        paymentStatus: data.paymentStatus ?? "UNPAID",
+        ownerResponseDeadline: data.ownerResponseDeadline,
+        confirmedAt: data.confirmedAt ?? null,
+        declinedAt: data.declinedAt ?? null,
+        cancelledAt: data.cancelledAt ?? null,
+        expiresAt: data.expiresAt ?? null,
+      },
+    });
+  } catch (err) {
+    if (isBookingCollisionError(err)) {
+      throw new HttpError(
+        409,
+        "The requested time slot overlaps with an existing booking on this pitch",
+        "INVENTORY_CONFLICT",
+      );
+    }
+    throw err;
+  }
 }
 
 export function findBookingById(
@@ -112,6 +146,29 @@ export function findBookingsByChallengeId(
   return db.booking.findMany({
     where: { challengeId },
     orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function findBlockingBookingRanges(
+  filter: FindBlockingBookingRangesFilter,
+  db: RepositoryContext = prisma,
+): Promise<Array<{ pitchId: string; startAt: Date; endAt: Date }>> {
+  const pitchIds = filter.pitchIds ?? (filter.pitchId ? [filter.pitchId] : []);
+  if (pitchIds.length === 0) return [];
+
+  return db.booking.findMany({
+    where: {
+      pitchId: { in: pitchIds },
+      status: { in: ["PENDING_OWNER_CONFIRMATION", "CONFIRMED"] },
+      startAt: { lt: filter.to },
+      endAt: { gt: filter.from },
+    },
+    select: {
+      pitchId: true,
+      startAt: true,
+      endAt: true,
+    },
+    orderBy: { startAt: "asc" },
   });
 }
 

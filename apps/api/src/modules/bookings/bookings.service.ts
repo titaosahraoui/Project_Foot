@@ -1,13 +1,16 @@
 import type {
+  BlockingRange,
   BookingDetailDto,
   BookingDto,
   ListBookingsQuery,
   PaginatedBookings,
 } from "@footconnect/shared";
+import type { RepositoryContext } from "../../lib/transaction";
 import { HttpError } from "../../middleware/error-handler";
 import * as repo from "./bookings.repository";
 
 export * from "./booking-compatibility";
+export { isBookingCollisionError } from "./bookings.repository";
 
 export function toBookingDto(booking: repo.BookingWithRelations | any): BookingDto {
   return {
@@ -17,19 +20,44 @@ export function toBookingDto(booking: repo.BookingWithRelations | any): BookingD
     organizerUserId: booking.organizerUserId,
     challengerTeamId: booking.challengerTeamId,
     opponentTeamId: booking.opponentTeamId,
-    startAt: booking.startAt.toISOString(),
-    endAt: booking.endAt.toISOString(),
+    startAt: booking.startAt instanceof Date ? booking.startAt.toISOString() : booking.startAt,
+    endAt: booking.endAt instanceof Date ? booking.endAt.toISOString() : booking.endAt,
     priceAmountMinor: booking.priceAmountMinor,
     currency: booking.currency as "DZD",
     status: booking.status,
     paymentStatus: booking.paymentStatus,
-    ownerResponseDeadline: booking.ownerResponseDeadline.toISOString(),
-    confirmedAt: booking.confirmedAt ? booking.confirmedAt.toISOString() : null,
-    declinedAt: booking.declinedAt ? booking.declinedAt.toISOString() : null,
-    cancelledAt: booking.cancelledAt ? booking.cancelledAt.toISOString() : null,
-    expiresAt: booking.expiresAt ? booking.expiresAt.toISOString() : null,
-    createdAt: booking.createdAt.toISOString(),
-    updatedAt: booking.updatedAt.toISOString(),
+    ownerResponseDeadline:
+      booking.ownerResponseDeadline instanceof Date
+        ? booking.ownerResponseDeadline.toISOString()
+        : booking.ownerResponseDeadline,
+    confirmedAt: booking.confirmedAt
+      ? booking.confirmedAt instanceof Date
+        ? booking.confirmedAt.toISOString()
+        : booking.confirmedAt
+      : null,
+    declinedAt: booking.declinedAt
+      ? booking.declinedAt instanceof Date
+        ? booking.declinedAt.toISOString()
+        : booking.declinedAt
+      : null,
+    cancelledAt: booking.cancelledAt
+      ? booking.cancelledAt instanceof Date
+        ? booking.cancelledAt.toISOString()
+        : booking.cancelledAt
+      : null,
+    expiresAt: booking.expiresAt
+      ? booking.expiresAt instanceof Date
+        ? booking.expiresAt.toISOString()
+        : booking.expiresAt
+      : null,
+    createdAt:
+      booking.createdAt instanceof Date
+        ? booking.createdAt.toISOString()
+        : booking.createdAt,
+    updatedAt:
+      booking.updatedAt instanceof Date
+        ? booking.updatedAt.toISOString()
+        : booking.updatedAt,
   };
 }
 
@@ -81,6 +109,14 @@ export function toBookingDetailDto(
   };
 }
 
+export async function createBooking(
+  data: repo.CreateBookingData,
+  db?: RepositoryContext,
+): Promise<BookingDto> {
+  const booking = await repo.createBooking(data, db);
+  return toBookingDto(booking);
+}
+
 export async function getBookingById(
   id: string,
   viewerUserId?: string,
@@ -90,6 +126,36 @@ export async function getBookingById(
     throw new HttpError(404, "Booking not found", "NOT_FOUND");
   }
   return toBookingDetailDto(booking, viewerUserId);
+}
+
+export async function getBlockingBookingRangesForPitch(
+  pitchId: string,
+  from: Date,
+  to: Date,
+): Promise<BlockingRange[]> {
+  const items = await repo.findBlockingBookingRanges({ pitchId, from, to });
+  return items.map((b) => ({
+    startAt: b.startAt,
+    endAt: b.endAt,
+  }));
+}
+
+export async function getBlockingBookingRangesForPitches(
+  pitchIds: string[],
+  from: Date,
+  to: Date,
+): Promise<Map<string, BlockingRange[]>> {
+  const items = await repo.findBlockingBookingRanges({ pitchIds, from, to });
+  const map = new Map<string, BlockingRange[]>();
+  for (const id of pitchIds) {
+    map.set(id, []);
+  }
+  for (const item of items) {
+    const list = map.get(item.pitchId) ?? [];
+    list.push({ startAt: item.startAt, endAt: item.endAt });
+    map.set(item.pitchId, list);
+  }
+  return map;
 }
 
 export async function listBookings(
