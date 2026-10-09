@@ -17,7 +17,10 @@ const { execFileSync } = require('child_process');
 const BRAND_GUIDELINES = 'docs/brand-guidelines.md';
 const DESIGN_TOKENS_JSON = 'assets/design-tokens.json';
 const DESIGN_TOKENS_CSS = 'assets/design-tokens.css';
-const GENERATE_TOKENS_SCRIPT = '.claude/skills/design-system/scripts/generate-tokens.cjs';
+const GENERATE_TOKENS_SCRIPT = path.resolve(
+  __dirname,
+  '../../design-system/scripts/generate-tokens.cjs'
+);
 
 /**
  * Extract color info from brand guidelines markdown
@@ -229,10 +232,10 @@ function main() {
   console.log(`✅ Updated: ${DESIGN_TOKENS_JSON}`);
 
   // Regenerate CSS
-  const generateScript = path.resolve(process.cwd(), GENERATE_TOKENS_SCRIPT);
+  const generateScript = GENERATE_TOKENS_SCRIPT;
   if (fs.existsSync(generateScript)) {
     try {
-      execFileSync('node', [generateScript, '--config', DESIGN_TOKENS_JSON, '-o', DESIGN_TOKENS_CSS], {
+      execFileSync('node', [generateScript, '--config', DESIGN_TOKENS_JSON, '--output', DESIGN_TOKENS_CSS], {
         cwd: process.cwd(),
         stdio: 'inherit'
       });

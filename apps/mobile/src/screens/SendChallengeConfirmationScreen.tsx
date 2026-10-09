@@ -23,6 +23,7 @@ import {
   formatAlgiersTimeRange,
 } from "../lib/algiers-time";
 import { useIdempotencyKey } from "../lib/idempotency";
+import { formatApproximateArea } from "../lib/approximate-area";
 import type { PlayStackParamList } from "../navigation";
 import { fontFamily } from "../theme/fonts";
 
@@ -71,10 +72,9 @@ export function SendChallengeConfirmationScreen({ route, navigation }: Props) {
     responseDeadline.toISOString(),
   );
 
-  const approxArea =
-    overlappingWindow.approximateArea ||
-    challengerAvailability.approximateArea ||
-    "Algiers Area";
+  const approxArea = formatApproximateArea(
+    challengerAvailability.approximateArea,
+  );
 
   const handleSendChallenge = async () => {
     // Prevent double taps

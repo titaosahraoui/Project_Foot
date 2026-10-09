@@ -21,6 +21,7 @@ import {
   getChallengeDeadlineInfo,
 } from "../lib/algiers-time";
 import { useIdempotencyKey } from "../lib/idempotency";
+import { formatApproximateArea } from "../lib/approximate-area";
 import type { PlayStackParamList } from "../navigation";
 import { fontFamily } from "../theme/fonts";
 
@@ -395,7 +396,7 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
               LOCATION & SEARCH RADIUS
             </Text>
             <Text variant="body" color={colors.primary}>
-              {approximateArea} · {radiusKm} km search radius
+              {formatApproximateArea(approximateArea)} · {radiusKm} km search radius
             </Text>
           </View>
         </View>
@@ -552,7 +553,7 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
               onPress={handleCancel}
               icon={
                 actionInProgress !== "CANCEL" ? (
-                  <Icon name="trash" size={16} color={colors.loss} />
+                  <Icon name="trash-2" size={16} color={colors.loss} />
                 ) : undefined
               }
             />

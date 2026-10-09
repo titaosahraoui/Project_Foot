@@ -7,6 +7,7 @@ import {
   getChallengeDeadlineInfo,
 } from "../../lib/algiers-time";
 import { fontFamily } from "../../theme/fonts";
+import { formatApproximateArea } from "../../lib/approximate-area";
 
 export interface ChallengeCardProps {
   challenge: MatchChallengeSummary;
@@ -123,7 +124,7 @@ export function ChallengeCard({
           <View style={styles.tagsRow}>
             <Badge label={formatLabel} tone="neutral" />
             <Badge
-              label={`${approximateArea} (${radiusKm}km)`}
+              label={`${formatApproximateArea(approximateArea)} (${radiusKm}km)`}
               tone="neutral"
             />
           </View>

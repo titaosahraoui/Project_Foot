@@ -94,6 +94,7 @@ describe("createChallenge (unit)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(repo.findAvailabilityById).mockReset();
     vi.mocked(idempotency.readIdempotentResult).mockResolvedValue(null);
     vi.mocked(idempotency.hashIdempotencyRequest).mockReturnValue("mock-hash");
     vi.mocked(teamsService.assertActiveCaptain).mockResolvedValue({} as any);
@@ -233,6 +234,43 @@ describe("createChallenge (unit)", () => {
       status: 409,
       code: "CONFLICT",
     });
+  });
+
+  it("reloads both locked availability rows before creating a challenge", async () => {
+    const closedOpponent = { ...opponentAvail, status: "MATCHED" as const };
+    vi.mocked(repo.findAvailabilityById).mockReset();
+    vi.mocked(repo.findAvailabilityById)
+      .mockImplementationOnce(async () => challengerAvail as any)
+      .mockImplementationOnce(async () => opponentAvail as any)
+      .mockImplementationOnce(async () => challengerAvail as any)
+      .mockImplementationOnce(async () => closedOpponent as any);
+
+    await expect(createChallenge(actorId, baseInput, now)).rejects.toMatchObject({
+      status: 409,
+      code: "CONFLICT",
+    });
+    expect(repo.createChallenge).not.toHaveBeenCalled();
+  });
+
+  it("rejects a challenge whose calculated response deadline has already passed", async () => {
+    const nearStart = new Date("2026-10-06T13:00:00.000Z");
+    const nearEnd = new Date("2026-10-06T15:00:00.000Z");
+    vi.mocked(repo.findAvailabilityById).mockReset();
+    vi.mocked(repo.findAvailabilityById).mockImplementation(async (id) => {
+      if (id === challengerAvailabilityId) {
+        return { ...challengerAvail, startAt: nearStart, endAt: nearEnd, expiresAt: nearStart } as any;
+      }
+      if (id === opponentAvailabilityId) {
+        return { ...opponentAvail, startAt: nearStart, endAt: nearEnd, expiresAt: nearStart } as any;
+      }
+      return null;
+    });
+
+    await expect(createChallenge(actorId, baseInput, now)).rejects.toMatchObject({
+      status: 422,
+      code: "CONDITIONS_VIOLATION",
+    });
+    expect(repo.createChallenge).not.toHaveBeenCalled();
   });
 
   it("throws 422 when opponent team has no active captain", async () => {

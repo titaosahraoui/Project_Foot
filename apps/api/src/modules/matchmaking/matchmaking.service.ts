@@ -696,7 +696,7 @@ export async function createChallenge(
   }
 
   // 2. Fetch both availability rows
-  const [challengerAvail, opponentAvail] = await Promise.all([
+  let [challengerAvail, opponentAvail] = await Promise.all([
     repo.findAvailabilityById(parsedInput.challengerAvailabilityId, tx),
     repo.findAvailabilityById(parsedInput.opponentAvailabilityId, tx),
   ]);
@@ -767,89 +767,122 @@ export async function createChallenge(
     );
   }
 
-  // 6. Check eligibility under exact recommendation rules
-  const [challengerTeam, opponentTeam] = await Promise.all([
-    teamsService.getTeam(challengerAvail.teamId),
-    teamsService.getTeam(opponentAvail.teamId),
-  ]);
-  const [challengerRating, opponentRating] = await Promise.all([
-    ratingsService.getTeamRating(challengerAvail.teamId, tx),
-    ratingsService.getTeamRating(opponentAvail.teamId, tx),
-  ]);
-
-  if (challengerTeam.status !== "ACTIVE" || opponentTeam.status !== "ACTIVE") {
-    throw new HttpError(422, "Both teams must be active", "CONDITIONS_VIOLATION");
-  }
-
-  const opponentHasCaptain = opponentTeam.members.some(
-    (m) => m.teamRole === "CAPTAIN" || m.role === "CAPTAIN",
-  );
-  if (!opponentHasCaptain) {
-    throw new HttpError(
-      422,
-      "Opponent team has no active captain",
-      "CONDITIONS_VIOLATION",
-    );
-  }
-
-  const eligibility = checkRecommendationEligibility(
-    {
-      team: {
-        id: challengerTeam.id,
-        isActive: challengerTeam.status === "ACTIVE",
-        hasActiveCaptain: true,
-        elo: challengerRating.rating,
-      },
-      availability: {
-        status: challengerAvail.status,
-        format: challengerAvail.format,
-        startAt: challengerAvail.startAt,
-        endAt: challengerAvail.endAt,
-        origin: { lat: challengerAvail.originLat, lng: challengerAvail.originLng },
-        radiusKm: challengerAvail.radiusKm,
-        eloTolerance: challengerAvail.eloTolerance,
-      },
-    },
-    {
-      team: {
-        id: opponentTeam.id,
-        isActive: opponentTeam.status === "ACTIVE",
-        hasActiveCaptain: opponentHasCaptain,
-        elo: opponentRating.rating,
-      },
-      availability: {
-        status: opponentAvail.status,
-        format: opponentAvail.format,
-        startAt: opponentAvail.startAt,
-        endAt: opponentAvail.endAt,
-        origin: { lat: opponentAvail.originLat, lng: opponentAvail.originLng },
-        radiusKm: opponentAvail.radiusKm,
-        eloTolerance: opponentAvail.eloTolerance,
-      },
-    },
-  );
-
-  if (!eligibility.eligible) {
-    throw new HttpError(
-      422,
-      `Incompatible match conditions: ${eligibility.reason}`,
-      "CONDITIONS_VIOLATION",
-    );
-  }
-
-  // 7. Canonical overlap snapshot
-  const overlapStart = new Date(
-    Math.max(challengerAvail.startAt.getTime(), opponentAvail.startAt.getTime()),
-  );
-  const overlapEnd = new Date(
-    Math.min(challengerAvail.endAt.getTime(), opponentAvail.endAt.getTime()),
-  );
-
-  const responseDeadline = calculateChallengeResponseDeadline(now, overlapStart);
-
   const execute = async (client: RepositoryContext) => {
-    // Acquire advisory lock on the challenger team to serialize concurrent requests
-    await repo.acquireTeamAvailabilityLock(challengerAvail.teamId, client);
+    // Lock the same two availability rows in deterministic order used by
+    // acceptance, then reload them. Recommendations are only a snapshot.
+    const sortedAvailabilityIds = [
+      parsedInput.challengerAvailabilityId,
+      parsedInput.opponentAvailabilityId,
+    ].sort();
+    for (const availabilityId of sortedAvailabilityIds) {
+      await repo.acquireAvailabilityLock(availabilityId, client);
+    }
+
+    [challengerAvail, opponentAvail] = await Promise.all([
+      repo.findAvailabilityById(parsedInput.challengerAvailabilityId, client),
+      repo.findAvailabilityById(parsedInput.opponentAvailabilityId, client),
+    ]);
+    if (!challengerAvail || !opponentAvail) {
+      throw new HttpError(404, "Availability not found");
+    }
+
+    await teamsService.assertActiveCaptain(challengerAvail.teamId, actorId);
+
+    if (
+      challengerAvail.teamId === opponentAvail.teamId ||
+      (parsedInput.opponentTeamId &&
+        parsedInput.opponentTeamId === challengerAvail.teamId) ||
+      (parsedInput.challengerTeamId &&
+        parsedInput.opponentTeamId &&
+        parsedInput.challengerTeamId === parsedInput.opponentTeamId)
+    ) {
+      throw new HttpError(422, "Cannot challenge own team", "CONDITIONS_VIOLATION");
+    }
+    if (
+      parsedInput.challengerTeamId &&
+      parsedInput.challengerTeamId !== challengerAvail.teamId
+    ) {
+      throw new HttpError(422, "Challenger team does not match availability", "CONDITIONS_VIOLATION");
+    }
+    if (
+      parsedInput.opponentTeamId &&
+      parsedInput.opponentTeamId !== opponentAvail.teamId
+    ) {
+      throw new HttpError(422, "Opponent team does not match availability", "CONDITIONS_VIOLATION");
+    }
+    if (challengerAvail.status !== "OPEN" || opponentAvail.status !== "OPEN") {
+      throw new HttpError(409, "Availability window is no longer open", "CONFLICT");
+    }
+    if (
+      challengerAvail.endAt.getTime() <= now.getTime() ||
+      challengerAvail.expiresAt.getTime() <= now.getTime() ||
+      opponentAvail.endAt.getTime() <= now.getTime() ||
+      opponentAvail.expiresAt.getTime() <= now.getTime()
+    ) {
+      throw new HttpError(409, "Availability window has expired", "CONFLICT");
+    }
+
+    const [challengerTeam, opponentTeam] = await Promise.all([
+      teamsService.getTeam(challengerAvail.teamId),
+      teamsService.getTeam(opponentAvail.teamId),
+    ]);
+    const [challengerRating, opponentRating] = await Promise.all([
+      ratingsService.getTeamRating(challengerAvail.teamId, client),
+      ratingsService.getTeamRating(opponentAvail.teamId, client),
+    ]);
+    if (challengerTeam.status !== "ACTIVE" || opponentTeam.status !== "ACTIVE") {
+      throw new HttpError(422, "Both teams must be active", "CONDITIONS_VIOLATION");
+    }
+    const lockedOpponentHasCaptain = opponentTeam.members.some(
+      (m) => m.teamRole === "CAPTAIN" || m.role === "CAPTAIN",
+    );
+    if (!lockedOpponentHasCaptain) {
+      throw new HttpError(422, "Opponent team has no active captain", "CONDITIONS_VIOLATION");
+    }
+    const lockedEligibility = checkRecommendationEligibility(
+      {
+        team: { id: challengerTeam.id, isActive: true, hasActiveCaptain: true, elo: challengerRating.rating },
+        availability: {
+          status: challengerAvail.status,
+          format: challengerAvail.format,
+          startAt: challengerAvail.startAt,
+          endAt: challengerAvail.endAt,
+          origin: { lat: challengerAvail.originLat, lng: challengerAvail.originLng },
+          radiusKm: challengerAvail.radiusKm,
+          eloTolerance: challengerAvail.eloTolerance,
+        },
+      },
+      {
+        team: { id: opponentTeam.id, isActive: true, hasActiveCaptain: lockedOpponentHasCaptain, elo: opponentRating.rating },
+        availability: {
+          status: opponentAvail.status,
+          format: opponentAvail.format,
+          startAt: opponentAvail.startAt,
+          endAt: opponentAvail.endAt,
+          origin: { lat: opponentAvail.originLat, lng: opponentAvail.originLng },
+          radiusKm: opponentAvail.radiusKm,
+          eloTolerance: opponentAvail.eloTolerance,
+        },
+      },
+    );
+    if (!lockedEligibility.eligible) {
+      throw new HttpError(422, `Incompatible match conditions: ${lockedEligibility.reason}`, "CONDITIONS_VIOLATION");
+    }
+
+    const overlapStart = new Date(
+      Math.max(challengerAvail.startAt.getTime(), opponentAvail.startAt.getTime()),
+    );
+    const overlapEnd = new Date(
+      Math.min(challengerAvail.endAt.getTime(), opponentAvail.endAt.getTime()),
+    );
+    const responseDeadline = calculateChallengeResponseDeadline(now, overlapStart);
+    if (responseDeadline.getTime() <= now.getTime()) {
+      throw new HttpError(
+        422,
+        "Challenge response deadline must be in the future",
+        "CONDITIONS_VIOLATION",
+      );
+    }
 
     // Double-check idempotency record inside transaction
     const inTxCached = await readIdempotentResult(actorId, scope, key);
@@ -1009,9 +1042,33 @@ export async function acceptChallenge(
       await repo.acquireAvailabilityLock(availId, client);
     }
 
+    // The challenge may have been declined, cancelled, or expired while this
+    // request waited for the availability locks. Always decide from the row
+    // read inside the transaction.
+    const currentChallenge = await repo.findChallengeById(challenge.id, client);
+    if (!currentChallenge) {
+      throw new HttpError(404, "Challenge not found");
+    }
+    if (currentChallenge.status === "ACCEPTED") {
+      return toMatchChallengeResponse(currentChallenge);
+    }
+    if (currentChallenge.status !== "PENDING") {
+      throw new HttpError(
+        409,
+        `Cannot accept challenge with status ${currentChallenge.status}`,
+        "CONFLICT",
+      );
+    }
+    if (
+      currentChallenge.responseDeadline.getTime() <= now.getTime() ||
+      currentChallenge.startAt.getTime() <= now.getTime()
+    ) {
+      throw new HttpError(409, "Challenge has expired", "CONFLICT");
+    }
+
     const [challengerAvail, opponentAvail] = await Promise.all([
-      repo.findAvailabilityById(challenge.challengerAvailabilityId, client),
-      repo.findAvailabilityById(challenge.opponentAvailabilityId, client),
+      repo.findAvailabilityById(currentChallenge.challengerAvailabilityId, client),
+      repo.findAvailabilityById(currentChallenge.opponentAvailabilityId, client),
     ]);
 
     if (
@@ -1027,9 +1084,30 @@ export async function acceptChallenge(
       );
     }
 
+    const bookingDeadline = calculateChallengeBookingDeadline(
+      now,
+      currentChallenge.startAt,
+    );
+
+    // Claim the PENDING row before changing availability. If another terminal
+    // transition wins, throwing rolls back this transaction without side effects.
+    const updatedChallenge = await repo.updateChallengeIfStatus(
+      currentChallenge.id,
+      "PENDING",
+      {
+        status: "ACCEPTED",
+        respondedAt: now,
+        bookingDeadline,
+      },
+      client,
+    );
+    if (!updatedChallenge) {
+      throw new HttpError(409, "Challenge was updated by another request", "CONFLICT");
+    }
+
     // Atomically set both availability rows MATCHED
     const matchResult = await repo.matchAvailabilities(
-      [challenge.challengerAvailabilityId, challenge.opponentAvailabilityId],
+      [currentChallenge.challengerAvailabilityId, currentChallenge.opponentAvailabilityId],
       now,
       client,
     );
@@ -1042,25 +1120,10 @@ export async function acceptChallenge(
       );
     }
 
-    const bookingDeadline = calculateChallengeBookingDeadline(
-      now,
-      challenge.startAt,
-    );
-
-    const updatedChallenge = await repo.updateChallenge(
-      challenge.id,
-      {
-        status: "ACCEPTED",
-        respondedAt: now,
-        bookingDeadline,
-      },
-      client,
-    );
-
     // Set every other PENDING challenge referencing either matched availability row to EXPIRED
     await repo.expireOtherPendingChallenges(
-      challenge.id,
-      [challenge.challengerAvailabilityId, challenge.opponentAvailabilityId],
+      currentChallenge.id,
+      [currentChallenge.challengerAvailabilityId, currentChallenge.opponentAvailabilityId],
       client,
     );
 
@@ -1113,16 +1176,44 @@ export async function declineChallenge(
     throw new HttpError(409, "Challenge has expired", "CONFLICT");
   }
 
-  const updated = await repo.updateChallenge(
-    challenge.id,
-    {
-      status: "DECLINED",
-      respondedAt: now,
-    },
-    tx,
-  );
+  const execute = async (client: RepositoryContext) => {
+    const currentChallenge = await repo.findChallengeById(challenge.id, client);
+    if (!currentChallenge) {
+      throw new HttpError(404, "Challenge not found");
+    }
+    if (currentChallenge.status === "DECLINED") {
+      return toMatchChallengeResponse(currentChallenge);
+    }
+    if (currentChallenge.status !== "PENDING") {
+      throw new HttpError(
+        409,
+        `Cannot decline challenge with status ${currentChallenge.status}`,
+        "CONFLICT",
+      );
+    }
+    if (
+      currentChallenge.responseDeadline.getTime() <= now.getTime() ||
+      currentChallenge.startAt.getTime() <= now.getTime()
+    ) {
+      throw new HttpError(409, "Challenge has expired", "CONFLICT");
+    }
 
-  return toMatchChallengeResponse(updated);
+    const updated = await repo.updateChallengeIfStatus(
+      currentChallenge.id,
+      "PENDING",
+      { status: "DECLINED", respondedAt: now },
+      client,
+    );
+    if (!updated) {
+      throw new HttpError(409, "Challenge was updated by another request", "CONFLICT");
+    }
+    return toMatchChallengeResponse(updated);
+  };
+
+  if (tx) {
+    return await execute(tx);
+  }
+  return await withTransaction(execute);
 }
 
 /**
@@ -1181,16 +1272,49 @@ export async function cancelChallenge(
     }
   }
 
-  const updated = await repo.updateChallenge(
-    challenge.id,
-    {
-      status: "CANCELLED",
-      cancelledAt: now,
-    },
-    tx,
-  );
+  const execute = async (client: RepositoryContext) => {
+    const currentChallenge = await repo.findChallengeById(challenge.id, client);
+    if (!currentChallenge) {
+      throw new HttpError(404, "Challenge not found");
+    }
+    if (currentChallenge.status === "CANCELLED") {
+      return toMatchChallengeResponse(currentChallenge);
+    }
+    if (currentChallenge.status !== "PENDING" && currentChallenge.status !== "ACCEPTED") {
+      throw new HttpError(
+        409,
+        `Cannot cancel challenge with status ${currentChallenge.status}`,
+        "CONFLICT",
+      );
+    }
+    if (
+      (currentChallenge.status === "PENDING" &&
+        (currentChallenge.responseDeadline.getTime() <= now.getTime() ||
+          currentChallenge.startAt.getTime() <= now.getTime())) ||
+      (currentChallenge.status === "ACCEPTED" &&
+        ((currentChallenge.bookingDeadline &&
+          currentChallenge.bookingDeadline.getTime() <= now.getTime()) ||
+          currentChallenge.startAt.getTime() <= now.getTime()))
+    ) {
+      throw new HttpError(409, "Challenge has expired", "CONFLICT");
+    }
 
-  return toMatchChallengeResponse(updated);
+    const updated = await repo.updateChallengeIfStatus(
+      currentChallenge.id,
+      currentChallenge.status,
+      { status: "CANCELLED", cancelledAt: now },
+      client,
+    );
+    if (!updated) {
+      throw new HttpError(409, "Challenge was updated by another request", "CONFLICT");
+    }
+    return toMatchChallengeResponse(updated);
+  };
+
+  if (tx) {
+    return await execute(tx);
+  }
+  return await withTransaction(execute);
 }
 
 /**

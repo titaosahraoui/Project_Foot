@@ -265,6 +265,34 @@ export function updateChallenge(
   });
 }
 
+/**
+ * Applies a challenge transition only while the row is still in the expected
+ * lifecycle state. The predicate makes concurrent terminal transitions race
+ * safely: exactly one writer can move a PENDING (or ACCEPTED) row forward.
+ */
+export async function updateChallengeIfStatus(
+  id: string,
+  expectedStatus: ChallengeStatus,
+  data: UpdateChallengeRecord,
+  db: RepositoryContext = prisma,
+): Promise<MatchChallenge | null> {
+  const result = await db.matchChallenge.updateMany({
+    where: { id, status: expectedStatus },
+    data: {
+      ...(data.status !== undefined && { status: data.status }),
+      ...(data.respondedAt !== undefined && { respondedAt: data.respondedAt }),
+      ...(data.cancelledAt !== undefined && { cancelledAt: data.cancelledAt }),
+      ...(data.bookingDeadline !== undefined && { bookingDeadline: data.bookingDeadline }),
+    },
+  });
+
+  if (result.count === 0) {
+    return null;
+  }
+
+  return db.matchChallenge.findUnique({ where: { id } });
+}
+
 export function matchAvailabilities(
   ids: string[],
   matchedAt: Date,

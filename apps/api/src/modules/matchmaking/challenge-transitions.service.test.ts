@@ -84,6 +84,7 @@ describe("Challenge Transitions (table-driven transition tests)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(repo.findChallengeById).mockReset();
 
     vi.mocked(teamsService.assertActiveCaptain).mockImplementation(async (teamId, userId) => {
       if (teamId === opponentTeamId && userId === opponentCaptainId) {
@@ -98,7 +99,7 @@ describe("Challenge Transitions (table-driven transition tests)", () => {
     vi.mocked(repo.acquireAvailabilityLock).mockResolvedValue(undefined);
     vi.mocked(repo.matchAvailabilities).mockResolvedValue({ count: 2 });
     vi.mocked(repo.expireOtherPendingChallenges).mockResolvedValue({ count: 0 });
-    vi.mocked(repo.updateChallenge).mockImplementation(async (id, data) => {
+    vi.mocked(repo.updateChallengeIfStatus).mockImplementation(async (id, _expectedStatus, data) => {
       return buildChallenge({ id, ...data });
     });
   });
@@ -494,7 +495,7 @@ describe("Challenge Transitions (table-driven transition tests)", () => {
       expect(result.status).toBe("ACCEPTED");
       expect(result.respondedAt).toBe(existingRespondedAt.toISOString());
       expect(result.bookingDeadline).toBe(existingBookingDeadline.toISOString());
-      expect(repo.updateChallenge).not.toHaveBeenCalled();
+      expect(repo.updateChallengeIfStatus).not.toHaveBeenCalled();
       expect(repo.matchAvailabilities).not.toHaveBeenCalled();
       expect(repo.expireOtherPendingChallenges).not.toHaveBeenCalled();
     });
@@ -513,7 +514,7 @@ describe("Challenge Transitions (table-driven transition tests)", () => {
 
       expect(result.status).toBe("DECLINED");
       expect(result.respondedAt).toBe(existingRespondedAt.toISOString());
-      expect(repo.updateChallenge).not.toHaveBeenCalled();
+      expect(repo.updateChallengeIfStatus).not.toHaveBeenCalled();
     });
 
     it("repeating cancelChallenge returns the existing cancelled challenge without re-updating", async () => {
@@ -530,8 +531,74 @@ describe("Challenge Transitions (table-driven transition tests)", () => {
 
       expect(result.status).toBe("CANCELLED");
       expect(result.cancelledAt).toBe(existingCancelledAt.toISOString());
-      expect(repo.updateChallenge).not.toHaveBeenCalled();
+      expect(repo.updateChallengeIfStatus).not.toHaveBeenCalled();
     });
+  });
+
+  describe("concurrent terminal transitions", () => {
+    it.each([
+      ["accept", opponentCaptainId, acceptChallenge],
+      ["decline", opponentCaptainId, declineChallenge],
+      ["cancel", challengerCaptainId, cancelChallenge],
+    ] as const)(
+      "%s does not overwrite a terminal state that wins after the initial read",
+      async (_action, actorId, transition) => {
+        vi.mocked(repo.findChallengeById).mockReset();
+        const pendingChallenge = buildChallenge({ status: "PENDING" });
+        const terminalChallenge = buildChallenge({
+          id: pendingChallenge.id,
+          status: _action === "cancel" ? "DECLINED" : "CANCELLED",
+          respondedAt: _action === "cancel" ? now : null,
+          cancelledAt: _action === "cancel" ? null : now,
+        });
+
+        vi.mocked(repo.findChallengeById)
+          .mockResolvedValueOnce(pendingChallenge)
+          .mockResolvedValueOnce(terminalChallenge);
+
+        await expect(transition(actorId, pendingChallenge.id, now)).rejects.toMatchObject({
+          status: 409,
+          code: "CONFLICT",
+        });
+      },
+    );
+
+    it.each([
+      ["accept", opponentCaptainId, acceptChallenge, "PENDING"],
+      ["decline", opponentCaptainId, declineChallenge, "PENDING"],
+      ["cancel", challengerCaptainId, cancelChallenge, "PENDING"],
+    ] as const)(
+      "%s rolls back side effects when its conditional write loses the race",
+      async (_action, actorId, transition, expectedStatus) => {
+        const pendingChallenge = buildChallenge({ status: "PENDING" });
+        vi.mocked(repo.findChallengeById).mockResolvedValue(pendingChallenge);
+        vi.mocked(repo.updateChallengeIfStatus).mockResolvedValue(null);
+        vi.mocked(repo.findAvailabilityById).mockImplementation(async (id) => {
+          if (id === challengerAvailabilityId) {
+            return buildAvailability(challengerAvailabilityId, challengerTeamId) as any;
+          }
+          if (id === opponentAvailabilityId) {
+            return buildAvailability(opponentAvailabilityId, opponentTeamId) as any;
+          }
+          return null;
+        });
+
+        await expect(transition(actorId, pendingChallenge.id, now)).rejects.toMatchObject({
+          status: 409,
+          code: "CONFLICT",
+        });
+
+        expect(repo.updateChallengeIfStatus).toHaveBeenCalledOnce();
+        expect(vi.mocked(repo.updateChallengeIfStatus)).toHaveBeenCalledWith(
+          pendingChallenge.id,
+          expectedStatus,
+          expect.any(Object),
+          expect.anything(),
+        );
+        expect(repo.matchAvailabilities).not.toHaveBeenCalled();
+        expect(repo.expireOtherPendingChallenges).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe("Non-existent challenge", () => {

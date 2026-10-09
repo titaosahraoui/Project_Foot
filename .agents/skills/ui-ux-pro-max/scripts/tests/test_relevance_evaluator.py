@@ -6,9 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = next(parent for parent in Path(__file__).resolve().parents
-            if (parent / "scripts/evaluate-relevance.py").exists())
-MODULE_PATH = ROOT / "scripts/evaluate-relevance.py"
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+MODULE_PATH = SCRIPTS_DIR / "evaluate-relevance.py"
 SPEC = importlib.util.spec_from_file_location("evaluate_relevance", MODULE_PATH)
 evaluator = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(evaluator)

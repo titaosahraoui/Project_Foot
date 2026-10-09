@@ -10,15 +10,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-REPO = next(
-    parent for parent in Path(__file__).resolve().parents
-    if all((parent / "scripts" / script).is_file() for script in (
-        "refresh-google-fonts.py", "refresh-icon-catalog.py",
-    ))
-)
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+REPO = SCRIPTS_DIR.parent
 FIXTURES = Path(__file__).parent / "fixtures" / "catalogs"
-FONT_SCRIPT = REPO / "scripts" / "refresh-google-fonts.py"
-ICON_SCRIPT = REPO / "scripts" / "refresh-icon-catalog.py"
+FONT_SCRIPT = SCRIPTS_DIR / "refresh-google-fonts.py"
+ICON_SCRIPT = SCRIPTS_DIR / "refresh-icon-catalog.py"
 
 
 class CatalogRefreshTest(unittest.TestCase):
