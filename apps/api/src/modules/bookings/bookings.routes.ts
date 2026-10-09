@@ -1,4 +1,11 @@
-import { createStubRouter } from "../_stub";
+import { Router } from "express";
+import { asyncHandler } from "../../middleware/async-handler";
+import { requireAuth } from "../../middleware/require-auth";
+import * as c from "./bookings.controller";
 
-// Phase 4: reserve a pitch slot, owner confirm/cancel, conflict handling.
-export const bookingsRouter = createStubRouter("bookings");
+export const bookingsRouter: Router = Router();
+
+bookingsRouter.get("/mine", requireAuth, asyncHandler(c.getMyBookingsHandler));
+bookingsRouter.get("/owner", requireAuth, asyncHandler(c.getOwnerBookingsHandler));
+bookingsRouter.get("/:id", requireAuth, asyncHandler(c.getBookingHandler));
+bookingsRouter.get("/", requireAuth, asyncHandler(c.listBookingsHandler));

@@ -53,6 +53,7 @@ model User {
   pitches             Pitch[]
   refreshSessions     RefreshSession[]
   organizedChallenges MatchChallenge[]
+  organizedBookings   Booking[]        @relation("organizedBookings")
 
   @@map("users")
 }
@@ -107,6 +108,7 @@ model Pitch {
 
   availabilityRules PitchAvailabilityRule[]
   blocks            PitchBlock[]
+  bookings          Booking[]
 
   @@map("pitches")
 }
@@ -180,6 +182,8 @@ model Team {
   availabilities       TeamAvailability[]
   challengerChallenges MatchChallenge[]   @relation("challengerChallenges")
   opponentChallenges   MatchChallenge[]   @relation("opponentChallenges")
+  challengerBookings   Booking[]          @relation("challengerBookings")
+  opponentBookings     Booking[]          @relation("opponentBookings")
 
   @@map("teams")
 }
@@ -339,6 +343,7 @@ model MatchChallenge {
   challengerAvailability TeamAvailability @relation("challengerAvailabilityChallenges", fields: [challengerAvailabilityId], references: [id], onDelete: Cascade)
   opponentAvailability   TeamAvailability @relation("opponentAvailabilityChallenges", fields: [opponentAvailabilityId], references: [id], onDelete: Cascade)
   organizerUser          User             @relation(fields: [organizerUserId], references: [id], onDelete: Cascade)
+  bookings               Booking[]
 
   @@index([challengerTeamId, status])
   @@index([opponentTeamId, status])
@@ -348,6 +353,64 @@ model MatchChallenge {
   @@index([status, responseDeadline])
   @@index([status, bookingDeadline])
   @@map("match_challenges")
+}
+
+// ---- Bookings (owned by the bookings module) ----
+
+enum BookingStatus {
+  PENDING_OWNER_CONFIRMATION
+  CONFIRMED
+  DECLINED
+  CANCELLED_BY_TEAM
+  CANCELLED_BY_OWNER
+  EXPIRED
+}
+
+enum OfflinePaymentStatus {
+  UNPAID
+  PAID_AT_VENUE
+  WAIVED
+}
+
+/// A requested or confirmed pitch reservation for an agreed challenge.
+/// Snapshots agreed price and exact scheduled window.
+/// Sequential attempts for one challenge are permitted, but at most one
+/// blocking attempt (PENDING_OWNER_CONFIRMATION or CONFIRMED) exists at a time.
+model Booking {
+  id                    String               @id @default(uuid())
+  pitchId               String
+  challengeId           String
+  organizerUserId       String
+  challengerTeamId      String
+  opponentTeamId        String
+  startAt               DateTime
+  endAt                 DateTime
+  priceAmountMinor      Int
+  currency              String               @default("DZD")
+  status                BookingStatus        @default(PENDING_OWNER_CONFIRMATION)
+  paymentStatus         OfflinePaymentStatus @default(UNPAID)
+  ownerResponseDeadline DateTime
+  confirmedAt           DateTime?
+  declinedAt            DateTime?
+  cancelledAt           DateTime?
+  expiresAt             DateTime?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  pitch          Pitch          @relation(fields: [pitchId], references: [id], onDelete: Cascade)
+  challenge      MatchChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  organizerUser  User           @relation("organizedBookings", fields: [organizerUserId], references: [id], onDelete: Cascade)
+  challengerTeam Team           @relation("challengerBookings", fields: [challengerTeamId], references: [id], onDelete: Cascade)
+  opponentTeam   Team           @relation("opponentBookings", fields: [opponentTeamId], references: [id], onDelete: Cascade)
+
+  @@index([pitchId, status])
+  @@index([challengeId])
+  @@index([organizerUserId, status])
+  @@index([challengerTeamId, status])
+  @@index([opponentTeamId, status])
+  @@index([status, ownerResponseDeadline])
+  @@index([pitchId, startAt, endAt])
+  @@map("bookings")
 }
 
 model IdempotencyRecord {
