@@ -1,10 +1,18 @@
-import type { TeamAvailability as TeamAvailabilityRecord } from "@prisma/client";
+import type {
+  MatchChallenge as MatchChallengeRecord,
+  TeamAvailability as TeamAvailabilityRecord,
+} from "@prisma/client";
 import {
+  matchChallengeResponseSchema,
   publicTeamAvailabilitySchema,
   teamAvailabilitySchema,
 } from "@footconnect/shared";
 import { describe, expect, it } from "vitest";
-import { toPublicTeamAvailability, toTeamAvailability } from "./matchmaking.service";
+import {
+  toMatchChallengeResponse,
+  toPublicTeamAvailability,
+  toTeamAvailability,
+} from "./matchmaking.service";
 
 const record: TeamAvailabilityRecord = {
   id: "6a1d3c0e-8b9f-4f1e-a1b2-3c4d5e6f7a8b",
@@ -21,6 +29,29 @@ const record: TeamAvailabilityRecord = {
   status: "OPEN",
   expiresAt: new Date("2026-11-01T17:00:00.000Z"),
   matchedAt: null,
+  cancelledAt: null,
+  createdAt: new Date("2026-10-04T12:00:00.000Z"),
+  updatedAt: new Date("2026-10-04T12:00:00.000Z"),
+};
+
+const challengeRecord: MatchChallengeRecord = {
+  id: "1a1d3c0e-8b9f-4f1e-a1b2-3c4d5e6f7a8b",
+  challengerTeamId: "0b6f7a52-6c43-4a8e-9a43-0c8f1f1d2b11",
+  opponentTeamId: "2c6f7a52-6c43-4a8e-9a43-0c8f1f1d2b22",
+  challengerAvailabilityId: "6a1d3c0e-8b9f-4f1e-a1b2-3c4d5e6f7a8b",
+  opponentAvailabilityId: "7b1d3c0e-8b9f-4f1e-a1b2-3c4d5e6f7a8c",
+  organizerUserId: "c2a7e0f4-1b3d-4e5f-8a9b-0c1d2e3f4a5b",
+  format: "FIVE_A_SIDE",
+  startAt: new Date("2026-11-01T17:00:00.000Z"),
+  endAt: new Date("2026-11-01T18:30:00.000Z"),
+  originLat: 36.7538,
+  originLng: 3.0588,
+  radiusKm: 10,
+  responseDeadline: new Date("2026-10-05T12:00:00.000Z"),
+  bookingDeadline: null,
+  status: "PENDING",
+  message: "Let's play!",
+  respondedAt: null,
   cancelledAt: null,
   createdAt: new Date("2026-10-04T12:00:00.000Z"),
   updatedAt: new Date("2026-10-04T12:00:00.000Z"),
@@ -66,3 +97,33 @@ describe("toPublicTeamAvailability", () => {
     });
   });
 });
+
+describe("toMatchChallengeResponse", () => {
+  it("maps a challenge record to strict response schema with approximateArea and UTC strings", () => {
+    const view = toMatchChallengeResponse(challengeRecord);
+
+    expect(matchChallengeResponseSchema.parse(view)).toEqual(view);
+    expect(view).toMatchObject({
+      id: "1a1d3c0e-8b9f-4f1e-a1b2-3c4d5e6f7a8b",
+      challengerTeamId: "0b6f7a52-6c43-4a8e-9a43-0c8f1f1d2b11",
+      opponentTeamId: "2c6f7a52-6c43-4a8e-9a43-0c8f1f1d2b22",
+      format: "FIVE_A_SIDE",
+      startAt: "2026-11-01T17:00:00.000Z",
+      endAt: "2026-11-01T18:30:00.000Z",
+      approximateArea: { lat: 36.75, lng: 3.06 },
+      radiusKm: 10,
+      status: "PENDING",
+      bookingDeadline: null,
+      respondedAt: null,
+      cancelledAt: null,
+    });
+  });
+
+  it("never exposes raw origin coordinates in challenge responses", () => {
+    const serialized = JSON.stringify(toMatchChallengeResponse(challengeRecord));
+    expect(serialized).not.toContain("originLat");
+    expect(serialized).not.toContain("36.7538");
+    expect(serialized).not.toContain("3.0588");
+  });
+});
+

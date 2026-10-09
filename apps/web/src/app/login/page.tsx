@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { loginSchema } from "@footconnect/shared";
+import { getLoginErrorMessage, loginSchema } from "@footconnect/shared";
 import { useAuth } from "@/lib/auth-context";
+import { apiBaseUrl } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -28,8 +29,8 @@ export default function LoginPage() {
     try {
       await login(parsed.data);
       router.push("/");
-    } catch {
-      setError("Invalid credentials.");
+    } catch (loginError) {
+      setError(getLoginErrorMessage(loginError, apiBaseUrl));
     } finally {
       setSubmitting(false);
     }

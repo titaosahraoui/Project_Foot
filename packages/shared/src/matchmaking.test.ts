@@ -6,7 +6,15 @@ import {
   availabilityStatusSchema,
   buildCreateTeamAvailabilitySchema,
   buildUpdateTeamAvailabilitySchema,
+  calculateChallengeBookingDeadline,
+  calculateChallengeResponseDeadline,
+  challengeStatusSchema,
+  createMatchChallengeSchema,
   createTeamAvailabilitySchema,
+  matchChallengeConditionsSchema,
+  matchChallengeDetailSchema,
+  matchChallengeResponseSchema,
+  matchChallengeSummarySchema,
   publicTeamAvailabilitySchema,
   teamAvailabilitySchema,
   toApproximateArea,
@@ -334,5 +342,180 @@ describe("updateTeamAvailabilitySchema", () => {
     expect(updateSchema.safeParse({ radiusKm: 55 }).success).toBe(false);
     expect(updateSchema.safeParse({ eloTolerance: 20 }).success).toBe(false);
     expect(updateSchema.safeParse({ eloTolerance: 600 }).success).toBe(false);
+  });
+});
+
+describe("challengeStatusSchema", () => {
+  it("accepts exactly the canonical challenge states", () => {
+    expect(challengeStatusSchema.options).toEqual([
+      "PENDING",
+      "ACCEPTED",
+      "DECLINED",
+      "CANCELLED",
+      "EXPIRED",
+    ]);
+  });
+});
+
+describe("challenge deadline calculations", () => {
+  it("calculates response deadline as earlier of 24h after creation or 4h before window start", () => {
+    const created = new Date("2026-10-04T12:00:00.000Z");
+    // Start is 48 hours away: 24h rule triggers
+    const farStart = new Date("2026-10-06T12:00:00.000Z");
+    expect(
+      calculateChallengeResponseDeadline(created, farStart).toISOString(),
+    ).toBe("2026-10-05T12:00:00.000Z");
+
+    // Start is only 10 hours away: (10h - 4h = 6h after creation) triggers
+    const nearStart = new Date("2026-10-04T22:00:00.000Z");
+    expect(
+      calculateChallengeResponseDeadline(created, nearStart).toISOString(),
+    ).toBe("2026-10-04T18:00:00.000Z");
+  });
+
+  it("calculates booking deadline as earlier of 24h after acceptance or 2h before window start", () => {
+    const accepted = new Date("2026-10-04T12:00:00.000Z");
+    // Start is 48 hours away: 24h rule triggers
+    const farStart = new Date("2026-10-06T12:00:00.000Z");
+    expect(
+      calculateChallengeBookingDeadline(accepted, farStart).toISOString(),
+    ).toBe("2026-10-05T12:00:00.000Z");
+
+    // Start is only 8 hours away: (8h - 2h = 6h after acceptance) triggers
+    const nearStart = new Date("2026-10-04T20:00:00.000Z");
+    expect(
+      calculateChallengeBookingDeadline(accepted, nearStart).toISOString(),
+    ).toBe("2026-10-04T18:00:00.000Z");
+  });
+});
+
+describe("createMatchChallengeSchema", () => {
+  const oppTeamId = "8c6f7a52-6c43-4a8e-9a43-0c8f1f1d2b99";
+  const oppAvailId = "7a1d3c0e-8b9f-4f1e-a1b2-3c4d5e6f7a99";
+
+  it("accepts valid challenge creation input", () => {
+    const valid = {
+      challengerTeamId: TEAM_ID,
+      opponentTeamId: oppTeamId,
+      challengerAvailabilityId: AVAILABILITY_ID,
+      opponentAvailabilityId: oppAvailId,
+      message: "Ready for match",
+    };
+    expect(createMatchChallengeSchema.parse(valid)).toEqual(valid);
+  });
+
+  it("rejects challenge between the same team", () => {
+    const selfChallenge = {
+      challengerTeamId: TEAM_ID,
+      opponentTeamId: TEAM_ID,
+      challengerAvailabilityId: AVAILABILITY_ID,
+      opponentAvailabilityId: oppAvailId,
+    };
+    const res = createMatchChallengeSchema.safeParse(selfChallenge);
+    expect(res.success).toBe(false);
+  });
+
+  it("rejects challenge between the same availability record", () => {
+    const sameAvail = {
+      challengerTeamId: TEAM_ID,
+      opponentTeamId: oppTeamId,
+      challengerAvailabilityId: AVAILABILITY_ID,
+      opponentAvailabilityId: AVAILABILITY_ID,
+    };
+    const res = createMatchChallengeSchema.safeParse(sameAvail);
+    expect(res.success).toBe(false);
+  });
+});
+
+describe("match challenge response, summary, and detail schemas", () => {
+  const baseChallenge = {
+    id: "9a1d3c0e-8b9f-4f1e-a1b2-3c4d5e6f7a11",
+    challengerTeamId: TEAM_ID,
+    opponentTeamId: "8c6f7a52-6c43-4a8e-9a43-0c8f1f1d2b99",
+    challengerAvailabilityId: AVAILABILITY_ID,
+    opponentAvailabilityId: "7a1d3c0e-8b9f-4f1e-a1b2-3c4d5e6f7a99",
+    organizerUserId: USER_ID,
+    format: "FIVE_A_SIDE" as const,
+    startAt: "2026-10-06T18:00:00.000Z",
+    endAt: "2026-10-06T19:30:00.000Z",
+    approximateArea: { lat: 36.75, lng: 3.06 },
+    radiusKm: 10,
+    responseDeadline: "2026-10-05T18:00:00.000Z",
+    bookingDeadline: null,
+    status: "PENDING" as const,
+    message: "Competitive 5v5",
+    respondedAt: null,
+    cancelledAt: null,
+    createdAt: "2026-10-04T18:00:00.000Z",
+    updatedAt: "2026-10-04T18:00:00.000Z",
+  };
+
+  it("validates matchChallengeResponseSchema", () => {
+    expect(matchChallengeResponseSchema.parse(baseChallenge)).toEqual(
+      baseChallenge,
+    );
+  });
+
+  it("validates matchChallengeConditionsSchema", () => {
+    const conditions = {
+      format: "FIVE_A_SIDE" as const,
+      startAt: "2026-10-06T18:00:00.000Z",
+      endAt: "2026-10-06T19:30:00.000Z",
+      approximateArea: { lat: 36.75, lng: 3.06 },
+      radiusKm: 10,
+    };
+    expect(matchChallengeConditionsSchema.parse(conditions)).toEqual(conditions);
+  });
+
+  it("validates matchChallengeSummarySchema with available actions", () => {
+    const summary = {
+      ...baseChallenge,
+      challengerTeam: {
+        id: TEAM_ID,
+        name: "Hydra FC",
+        logoUrl: null,
+        elo: 1050,
+      },
+      opponentTeam: {
+        id: "8c6f7a52-6c43-4a8e-9a43-0c8f1f1d2b99",
+        name: "Algiers United",
+        logoUrl: null,
+        elo: 1000,
+      },
+      availableActions: ["ACCEPT" as const, "DECLINE" as const],
+    };
+    expect(matchChallengeSummarySchema.parse(summary)).toEqual(summary);
+  });
+
+  it("validates matchChallengeDetailSchema with conditions and overlapping window", () => {
+    const detail = {
+      ...baseChallenge,
+      challengerTeam: {
+        id: TEAM_ID,
+        name: "Hydra FC",
+        logoUrl: null,
+        elo: 1050,
+      },
+      opponentTeam: {
+        id: "8c6f7a52-6c43-4a8e-9a43-0c8f1f1d2b99",
+        name: "Algiers United",
+        logoUrl: null,
+        elo: 1000,
+      },
+      availableActions: ["CANCEL" as const],
+      conditions: {
+        format: "FIVE_A_SIDE" as const,
+        startAt: "2026-10-06T18:00:00.000Z",
+        endAt: "2026-10-06T19:30:00.000Z",
+        approximateArea: { lat: 36.75, lng: 3.06 },
+        radiusKm: 10,
+      },
+      overlappingWindow: {
+        startAt: "2026-10-06T18:00:00.000Z",
+        endAt: "2026-10-06T19:30:00.000Z",
+        durationMinutes: 90,
+      },
+    };
+    expect(matchChallengeDetailSchema.parse(detail)).toEqual(detail);
   });
 });

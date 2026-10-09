@@ -9,11 +9,13 @@ import { fontFamily } from "../../theme/fonts";
 export interface OpponentCardProps {
   recommendation: OpponentRecommendation;
   onViewTeam: (teamId: string) => void;
+  onChallenge?: (recommendation: OpponentRecommendation) => void;
 }
 
 export function OpponentCard({
   recommendation,
   onViewTeam,
+  onChallenge,
 }: OpponentCardProps) {
   const [showExplanation, setShowExplanation] = useState(false);
 
@@ -164,13 +166,24 @@ export function OpponentCard({
         </View>
       ) : null}
 
-      {/* Actions: View Team ONLY (Challenge arrives in M07) */}
+      {/* Actions */}
       <View style={styles.actionsRow}>
+        {onChallenge ? (
+          <Button
+            label="Challenge"
+            size="sm"
+            variant="primary"
+            icon={<Icon name="trophy" size={14} color={colors.onPrimary} />}
+            onPress={() => onChallenge(recommendation)}
+            style={{ flex: 1 }}
+          />
+        ) : null}
         <Button
           label="View Team"
           size="sm"
           variant="secondary"
           onPress={() => onViewTeam(team.id)}
+          style={onChallenge ? { flex: 1 } : undefined}
         />
       </View>
     </Card>
@@ -255,5 +268,7 @@ const styles = StyleSheet.create({
   },
   actionsRow: {
     paddingTop: 4,
+    flexDirection: "row",
+    gap: spacing.sm,
   },
 });

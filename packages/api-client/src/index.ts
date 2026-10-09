@@ -3,6 +3,7 @@ import type {
   AuthUser,
   AvailableSlot,
   AvailableSlotQuery,
+  CreateMatchChallengeInput,
   CreatePitchBlockInput,
   CreatePitchInput,
   CreateTeamAvailabilityInput,
@@ -11,6 +12,9 @@ import type {
   HealthStatus,
   Invitation,
   LoginInput,
+  MatchChallengeDetail,
+  MatchChallengesQuery,
+  PaginatedMatchChallenges,
   PaginatedRecommendations,
   PaginationQuery,
   Pitch,
@@ -109,7 +113,38 @@ export interface ApiClient {
     availabilityId: string,
     query?: PaginationQuery,
   ): Promise<PaginatedRecommendations>;
+  // Matchmaking Challenges (Milestone 07)
+  createChallenge(
+    input: CreateMatchChallengeInput,
+    idempotencyKey: string,
+  ): Promise<MatchChallengeDetail>;
+  getChallengeInbox(
+    query?: MatchChallengesQuery,
+  ): Promise<PaginatedMatchChallenges>;
+  getInboxChallenges(
+    query?: MatchChallengesQuery,
+  ): Promise<PaginatedMatchChallenges>;
+  getChallengeOutbox(
+    query?: MatchChallengesQuery,
+  ): Promise<PaginatedMatchChallenges>;
+  getOutboxChallenges(
+    query?: MatchChallengesQuery,
+  ): Promise<PaginatedMatchChallenges>;
+  getChallenge(id: string): Promise<MatchChallengeDetail>;
+  acceptChallenge(
+    id: string,
+    idempotencyKey?: string,
+  ): Promise<MatchChallengeDetail>;
+  declineChallenge(
+    id: string,
+    idempotencyKey?: string,
+  ): Promise<MatchChallengeDetail>;
+  cancelChallenge(
+    id: string,
+    idempotencyKey?: string,
+  ): Promise<MatchChallengeDetail>;
 }
+
 
 /**
  * Creates a typed REST client shared by the web and mobile apps.
@@ -266,6 +301,87 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       const qs = params.toString();
       return request<PaginatedRecommendations>(
         `/api/v1/matchmaking/availability/${availabilityId}/recommendations${qs ? `?${qs}` : ""}`,
+      );
+    },
+    // Match Challenges (Milestone 07)
+    createChallenge: (input, idempotencyKey) =>
+      request<MatchChallengeDetail>("/api/v1/matchmaking/challenges", {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: json(input),
+      }),
+    getChallengeInbox: (query) => {
+      const params = new URLSearchParams();
+      if (query?.page !== undefined) params.set("page", String(query.page));
+      if (query?.pageSize !== undefined)
+        params.set("pageSize", String(query.pageSize));
+      if (query?.teamId) params.set("teamId", query.teamId);
+      if (query?.status) params.set("status", query.status);
+      const qs = params.toString();
+      return request<PaginatedMatchChallenges>(
+        `/api/v1/matchmaking/challenges/inbox${qs ? `?${qs}` : ""}`,
+      );
+    },
+    getInboxChallenges: (query) => {
+      const params = new URLSearchParams();
+      if (query?.page !== undefined) params.set("page", String(query.page));
+      if (query?.pageSize !== undefined)
+        params.set("pageSize", String(query.pageSize));
+      if (query?.teamId) params.set("teamId", query.teamId);
+      if (query?.status) params.set("status", query.status);
+      const qs = params.toString();
+      return request<PaginatedMatchChallenges>(
+        `/api/v1/matchmaking/challenges/inbox${qs ? `?${qs}` : ""}`,
+      );
+    },
+    getChallengeOutbox: (query) => {
+      const params = new URLSearchParams();
+      if (query?.page !== undefined) params.set("page", String(query.page));
+      if (query?.pageSize !== undefined)
+        params.set("pageSize", String(query.pageSize));
+      if (query?.teamId) params.set("teamId", query.teamId);
+      if (query?.status) params.set("status", query.status);
+      const qs = params.toString();
+      return request<PaginatedMatchChallenges>(
+        `/api/v1/matchmaking/challenges/outbox${qs ? `?${qs}` : ""}`,
+      );
+    },
+    getOutboxChallenges: (query) => {
+      const params = new URLSearchParams();
+      if (query?.page !== undefined) params.set("page", String(query.page));
+      if (query?.pageSize !== undefined)
+        params.set("pageSize", String(query.pageSize));
+      if (query?.teamId) params.set("teamId", query.teamId);
+      if (query?.status) params.set("status", query.status);
+      const qs = params.toString();
+      return request<PaginatedMatchChallenges>(
+        `/api/v1/matchmaking/challenges/outbox${qs ? `?${qs}` : ""}`,
+      );
+    },
+    getChallenge: (id) =>
+      request<MatchChallengeDetail>(`/api/v1/matchmaking/challenges/${id}`),
+    acceptChallenge: (id, idempotencyKey) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+      return request<MatchChallengeDetail>(
+        `/api/v1/matchmaking/challenges/${id}/accept`,
+        { method: "POST", headers },
+      );
+    },
+    declineChallenge: (id, idempotencyKey) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+      return request<MatchChallengeDetail>(
+        `/api/v1/matchmaking/challenges/${id}/decline`,
+        { method: "POST", headers },
+      );
+    },
+    cancelChallenge: (id, idempotencyKey) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+      return request<MatchChallengeDetail>(
+        `/api/v1/matchmaking/challenges/${id}/cancel`,
+        { method: "POST", headers },
       );
     },
   };

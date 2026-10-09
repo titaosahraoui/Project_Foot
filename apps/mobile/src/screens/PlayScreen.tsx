@@ -89,6 +89,32 @@ export function PlayScreen() {
           />
         </Card>
 
+        <Card style={styles.challengeInboxCard}>
+          <View style={{ gap: 2 }}>
+            <Text variant="titleS" color={colors.primary}>
+              MATCH CHALLENGES
+            </Text>
+            <Text variant="caption" color={colors.onSurfaceVariant}>
+              Review received challenges and track the ones your squad sent.
+            </Text>
+          </View>
+          <View style={styles.challengeInboxActions}>
+            <Button
+              label="Received"
+              size="sm"
+              variant="secondary"
+              onPress={() => navigation.navigate("ChallengeInbox")}
+              style={styles.challengeInboxAction}
+            />
+            <Button
+              label="Sent"
+              size="sm"
+              onPress={() => navigation.navigate("ChallengeOutbox")}
+              style={styles.challengeInboxAction}
+            />
+          </View>
+        </Card>
+
         {/* Filter Bar */}
         <Card style={styles.filterCard}>
           <View style={styles.filterHeader}>
@@ -556,6 +582,17 @@ const styles = StyleSheet.create({
     borderColor: "rgba(195, 244, 0, 0.25)",
     padding: spacing.sm,
     gap: spacing.xs,
+  },
+  challengeInboxCard: {
+    gap: spacing.sm,
+    backgroundColor: colors.surfaceContainer,
+  },
+  challengeInboxActions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  challengeInboxAction: {
+    flex: 1,
   },
   matchmakingBannerLeft: {
     flexDirection: "row",

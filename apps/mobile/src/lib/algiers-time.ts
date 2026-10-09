@@ -329,3 +329,62 @@ export function validateAvailabilityInput(
     endUtcIso,
   };
 }
+
+/**
+ * Returns countdown and formatting for challenge deadlines (response or booking).
+ */
+export function getChallengeDeadlineInfo(
+  deadlineUtcIso: string,
+  type: "response" | "booking" = "response",
+  now: Date = new Date(),
+): {
+  isExpired: boolean;
+  timeRemainingText: string;
+  formattedDeadline: string;
+  statusText: string;
+} {
+  const deadlineDate = new Date(deadlineUtcIso);
+  const nowMs = now.getTime();
+  const deadlineMs = deadlineDate.getTime();
+  const formattedDeadline = formatAlgiersDateTime(deadlineUtcIso);
+
+  if (isNaN(deadlineMs) || nowMs >= deadlineMs) {
+    return {
+      isExpired: true,
+      timeRemainingText: "Expired",
+      formattedDeadline,
+      statusText:
+        type === "response"
+          ? "Response deadline passed"
+          : "Pitch booking deadline passed",
+    };
+  }
+
+  const diffMs = deadlineMs - nowMs;
+  const totalMins = Math.floor(diffMs / 60000);
+  const hours = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+
+  let timeRemainingText = "";
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    const remHours = hours % 24;
+    timeRemainingText = `${days}d ${remHours}h remaining`;
+  } else if (hours > 0) {
+    timeRemainingText = `${hours}h ${mins}m remaining`;
+  } else {
+    timeRemainingText = `${mins}m remaining`;
+  }
+
+  const statusText =
+    type === "response"
+      ? `Response due in ${timeRemainingText}`
+      : `Pitch booking due in ${timeRemainingText}`;
+
+  return {
+    isExpired: false,
+    timeRemainingText,
+    formattedDeadline,
+    statusText,
+  };
+}

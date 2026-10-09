@@ -189,6 +189,14 @@ export function RecommendedOpponentsScreen({ route, navigation }: Props) {
             <OpponentCard
               recommendation={item}
               onViewTeam={(tId) => navigation.navigate("TeamDetail", { teamId: tId })}
+              onChallenge={(rec) => {
+                if (currentAvailability) {
+                  navigation.navigate("SendChallengeConfirmation", {
+                    challengerAvailability: currentAvailability,
+                    recommendation: rec,
+                  });
+                }
+              }}
             />
           )}
           ListFooterComponent={
