@@ -2,6 +2,7 @@ import {
   calculateOwnerResponseDeadline,
   createBookingSchema,
   isLateCancellation,
+  type AcceptedConditionComparison,
   type BlockingRange,
   type BookingDetailDto,
   type BookingDto,
@@ -21,6 +22,7 @@ import { withTransaction, type RepositoryContext } from "../../lib/transaction";
 import { HttpError } from "../../middleware/error-handler";
 import * as matchesService from "../matches/matches.service";
 import * as matchmakingService from "../matchmaking/matchmaking.service";
+import { haversineKm } from "../matchmaking/recommendation-score";
 import { assertBookingCompatible } from "./booking-compatibility";
 import * as repo from "./bookings.repository";
 
@@ -102,6 +104,60 @@ export function toBookingDetailDto(
     ) ||
       booking.match?.awayCaptainId === viewerUserId);
 
+  const challenge = booking.challenge;
+  let comparison: AcceptedConditionComparison | undefined;
+  if (challenge && booking.pitch) {
+    const pitchLat = booking.pitch.lat ?? null;
+    const pitchLng = booking.pitch.lng ?? null;
+    let distanceKm: number | null = null;
+    if (typeof pitchLat === "number" && typeof pitchLng === "number") {
+      distanceKm =
+        Math.round(
+          haversineKm(
+            { lat: challenge.originLat, lng: challenge.originLng },
+            { lat: pitchLat, lng: pitchLng },
+          ) * 10,
+        ) / 10;
+    }
+    const bStart =
+      booking.startAt instanceof Date
+        ? booking.startAt.toISOString()
+        : booking.startAt;
+    const bEnd =
+      booking.endAt instanceof Date
+        ? booking.endAt.toISOString()
+        : booking.endAt;
+    const cStart =
+      challenge.startAt instanceof Date
+        ? challenge.startAt.toISOString()
+        : challenge.startAt;
+    const cEnd =
+      challenge.endAt instanceof Date
+        ? challenge.endAt.toISOString()
+        : challenge.endAt;
+
+    comparison = {
+      agreedFormat: challenge.format,
+      pitchFormat: booking.pitch.size,
+      formatMatches: challenge.format === booking.pitch.size,
+      agreedWindowStartAt: cStart,
+      agreedWindowEndAt: cEnd,
+      bookingStartAt: bStart,
+      bookingEndAt: bEnd,
+      withinWindow:
+        new Date(bStart).getTime() >= new Date(cStart).getTime() &&
+        new Date(bEnd).getTime() <= new Date(cEnd).getTime(),
+      agreedOriginLat: challenge.originLat,
+      agreedOriginLng: challenge.originLng,
+      agreedRadiusKm: challenge.radiusKm,
+      pitchLat,
+      pitchLng,
+      pitchDistanceKm: distanceKm,
+      withinRadius:
+        distanceKm !== null ? distanceKm <= challenge.radiusKm : true,
+    };
+  }
+
   return {
     ...base,
     pitch: {
@@ -140,6 +196,8 @@ export function toBookingDetailDto(
             (isOwner || isChallengerCaptain || isOpponentCaptain)),
       ),
     },
+    acceptedConditions: comparison,
+    comparison,
   };
 }
 

@@ -6,16 +6,21 @@ import {
   declineBookingSchema,
   listBookingsQuerySchema,
 } from "@footconnect/shared";
+import { HttpError } from "../../middleware/error-handler";
 import * as service from "./bookings.service";
 
 export async function createBookingHandler(req: Request, res: Response): Promise<void> {
   const idempotencyKey =
     req.header("idempotency-key") || req.header("Idempotency-Key");
+  if (!idempotencyKey || typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
+    throw new HttpError(400, "Idempotency-Key header is required", "VALIDATION_ERROR");
+  }
+
   const input = createBookingSchema.parse(req.body);
   const result = await service.createBooking(
     req.userId!,
     input,
-    idempotencyKey ? idempotencyKey.trim() : undefined,
+    idempotencyKey.trim(),
   );
   res.status(201).json(result);
 }
@@ -50,6 +55,12 @@ export async function getOwnerBookingsHandler(req: Request, res: Response): Prom
 }
 
 export async function confirmBookingHandler(req: Request, res: Response): Promise<void> {
+  const idempotencyKey =
+    req.header("idempotency-key") || req.header("Idempotency-Key");
+  if (!idempotencyKey || typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
+    throw new HttpError(400, "Idempotency-Key header is required", "VALIDATION_ERROR");
+  }
+
   const input = confirmBookingSchema.parse(req.body ?? {});
   const result = await service.confirmBooking(
     req.userId!,
@@ -61,6 +72,12 @@ export async function confirmBookingHandler(req: Request, res: Response): Promis
 }
 
 export async function declineBookingHandler(req: Request, res: Response): Promise<void> {
+  const idempotencyKey =
+    req.header("idempotency-key") || req.header("Idempotency-Key");
+  if (!idempotencyKey || typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
+    throw new HttpError(400, "Idempotency-Key header is required", "VALIDATION_ERROR");
+  }
+
   const input = declineBookingSchema.parse(req.body ?? {});
   const result = await service.declineBooking(
     req.userId!,

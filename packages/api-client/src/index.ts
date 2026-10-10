@@ -3,17 +3,25 @@ import type {
   AuthUser,
   AvailableSlot,
   AvailableSlotQuery,
+  BookingDetailDto,
+  BookingDto,
+  CancelBookingInput,
+  ConfirmBookingInput,
+  CreateBookingInput,
   CreateMatchChallengeInput,
   CreatePitchBlockInput,
   CreatePitchInput,
   CreateTeamAvailabilityInput,
   CreateTeamInput,
+  DeclineBookingInput,
   FormatCode,
   HealthStatus,
   Invitation,
+  ListBookingsQuery,
   LoginInput,
   MatchChallengeDetail,
   MatchChallengesQuery,
+  PaginatedBookings,
   PaginatedMatchChallenges,
   PaginatedRecommendations,
   PaginationQuery,
@@ -63,16 +71,20 @@ export interface ApiClient {
   put<T>(path: string, data?: unknown): Promise<T>;
   patch<T>(path: string, data?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
+
+  // Health
   health(): Promise<HealthStatus>;
+
   // Auth
   register(input: RegisterInput): Promise<AuthResponse>;
   login(input: LoginInput): Promise<AuthResponse>;
-  /** Pass a refresh token (mobile); omit to rely on the httpOnly cookie (web). */
   refresh(refreshToken?: string): Promise<AuthResponse>;
   logout(refreshToken?: string): Promise<void>;
-  // Profile
+
+  // Users
   getMyProfile(): Promise<AuthUser>;
   updateMyProfile(input: UpdateProfileInput): Promise<AuthUser>;
+
   // Teams
   createTeam(input: CreateTeamInput): Promise<TeamDetail>;
   getMyTeams(): Promise<TeamDetail[]>;
@@ -82,13 +94,18 @@ export interface ApiClient {
   archiveTeam(teamId: string): Promise<TeamDetail>;
   reactivateTeam(teamId: string): Promise<TeamDetail>;
   getTeamLineups(teamId: string): Promise<TeamLineup[]>;
-  setTeamLineup(teamId: string, format: FormatCode, input: SetTeamLineupInput): Promise<TeamLineup>;
+  setTeamLineup(
+    teamId: string,
+    format: FormatCode,
+    input: SetTeamLineupInput,
+  ): Promise<TeamLineup>;
   inviteToTeam(teamId: string, email: string): Promise<void>;
   getInvitations(): Promise<Invitation[]>;
   acceptInvitation(invitationId: string): Promise<TeamDetail>;
   declineInvitation(invitationId: string): Promise<void>;
   removeTeamMember(teamId: string, userId: string): Promise<void>;
   leaveTeam(teamId: string, userId: string): Promise<void>;
+
   // Pitches
   getPitches(query?: PitchQuery): Promise<Pitch[]>;
   getMyPitches(): Promise<Pitch[]>;
@@ -103,20 +120,25 @@ export interface ApiClient {
   createPitchBlock(pitchId: string, input: CreatePitchBlockInput): Promise<PitchBlock>;
   cancelPitchBlock(pitchId: string, blockId: string): Promise<void>;
   getAvailableSlots(pitchId: string, query: AvailableSlotQuery): Promise<AvailableSlot[]>;
+
   // Matchmaking
   createAvailability(input: CreateTeamAvailabilityInput): Promise<TeamAvailability>;
   getMyAvailability(): Promise<TeamAvailability[]>;
   getAvailability(id: string): Promise<TeamAvailability>;
-  updateAvailability(id: string, input: UpdateTeamAvailabilityInput): Promise<TeamAvailability>;
+  updateAvailability(
+    id: string,
+    input: UpdateTeamAvailabilityInput,
+  ): Promise<TeamAvailability>;
   cancelAvailability(id: string): Promise<TeamAvailability>;
   getRecommendations(
     availabilityId: string,
     query?: PaginationQuery,
   ): Promise<PaginatedRecommendations>;
-  // Matchmaking Challenges (Milestone 07)
+
+  // Match Challenges (Milestone 07)
   createChallenge(
     input: CreateMatchChallengeInput,
-    idempotencyKey: string,
+    idempotencyKey?: string,
   ): Promise<MatchChallengeDetail>;
   getChallengeInbox(
     query?: MatchChallengesQuery,
@@ -143,6 +165,37 @@ export interface ApiClient {
     id: string,
     idempotencyKey?: string,
   ): Promise<MatchChallengeDetail>;
+
+  // Bookings (Milestone 08)
+  createBooking(
+    input: CreateBookingInput,
+    idempotencyKey: string,
+  ): Promise<BookingDto>;
+  getMyBookings(
+    query?: ListBookingsQuery,
+  ): Promise<PaginatedBookings>;
+  getOwnerBookings(
+    query?: ListBookingsQuery,
+  ): Promise<PaginatedBookings>;
+  getBooking(id: string): Promise<BookingDetailDto>;
+  confirmBooking(
+    id: string,
+    idempotencyKey: string,
+    input?: ConfirmBookingInput,
+  ): Promise<BookingDto>;
+  declineBooking(
+    id: string,
+    idempotencyKey: string,
+    input?: DeclineBookingInput,
+  ): Promise<BookingDto>;
+  cancelBooking(
+    id: string,
+    input?: CancelBookingInput,
+    idempotencyKey?: string,
+  ): Promise<BookingDto>;
+  listBookings(
+    query?: ListBookingsQuery,
+  ): Promise<PaginatedBookings>;
 }
 
 
@@ -304,12 +357,15 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       );
     },
     // Match Challenges (Milestone 07)
-    createChallenge: (input, idempotencyKey) =>
-      request<MatchChallengeDetail>("/api/v1/matchmaking/challenges", {
+    createChallenge: (input, idempotencyKey) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+      return request<MatchChallengeDetail>("/api/v1/matchmaking/challenges", {
         method: "POST",
-        headers: { "Idempotency-Key": idempotencyKey },
+        headers,
         body: json(input),
-      }),
+      });
+    },
     getChallengeInbox: (query) => {
       const params = new URLSearchParams();
       if (query?.page !== undefined) params.set("page", String(query.page));
@@ -383,6 +439,73 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         `/api/v1/matchmaking/challenges/${id}/cancel`,
         { method: "POST", headers },
       );
+    },
+    // Bookings (Milestone 08)
+    createBooking: (input, idempotencyKey) =>
+      request<BookingDto>("/api/v1/bookings", {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: json(input),
+      }),
+    getMyBookings: (query) => {
+      const params = new URLSearchParams();
+      if (query?.page !== undefined) params.set("page", String(query.page));
+      if (query?.pageSize !== undefined) params.set("pageSize", String(query.pageSize));
+      if (query?.limit !== undefined) params.set("limit", String(query.limit));
+      if (query?.status) params.set("status", query.status);
+      if (query?.pitchId) params.set("pitchId", query.pitchId);
+      if (query?.challengeId) params.set("challengeId", query.challengeId);
+      if (query?.teamId) params.set("teamId", query.teamId);
+      const qs = params.toString();
+      return request<PaginatedBookings>(`/api/v1/bookings/mine${qs ? `?${qs}` : ""}`);
+    },
+    getOwnerBookings: (query) => {
+      const params = new URLSearchParams();
+      if (query?.page !== undefined) params.set("page", String(query.page));
+      if (query?.pageSize !== undefined) params.set("pageSize", String(query.pageSize));
+      if (query?.limit !== undefined) params.set("limit", String(query.limit));
+      if (query?.status) params.set("status", query.status);
+      if (query?.pitchId) params.set("pitchId", query.pitchId);
+      if (query?.challengeId) params.set("challengeId", query.challengeId);
+      if (query?.teamId) params.set("teamId", query.teamId);
+      const qs = params.toString();
+      return request<PaginatedBookings>(`/api/v1/bookings/owner${qs ? `?${qs}` : ""}`);
+    },
+    getBooking: (id) =>
+      request<BookingDetailDto>(`/api/v1/bookings/${id}`),
+    confirmBooking: (id, idempotencyKey, input) =>
+      request<BookingDto>(`/api/v1/bookings/${id}/confirm`, {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: json(input ?? {}),
+      }),
+    declineBooking: (id, idempotencyKey, input) =>
+      request<BookingDto>(`/api/v1/bookings/${id}/decline`, {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: json(input ?? {}),
+      }),
+    cancelBooking: (id, input, idempotencyKey) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+      return request<BookingDto>(`/api/v1/bookings/${id}/cancel`, {
+        method: "POST",
+        headers,
+        body: json(input ?? {}),
+      });
+    },
+    listBookings: (query) => {
+      const params = new URLSearchParams();
+      if (query?.page !== undefined) params.set("page", String(query.page));
+      if (query?.pageSize !== undefined) params.set("pageSize", String(query.pageSize));
+      if (query?.limit !== undefined) params.set("limit", String(query.limit));
+      if (query?.role) params.set("role", query.role);
+      if (query?.status) params.set("status", query.status);
+      if (query?.pitchId) params.set("pitchId", query.pitchId);
+      if (query?.challengeId) params.set("challengeId", query.challengeId);
+      if (query?.teamId) params.set("teamId", query.teamId);
+      const qs = params.toString();
+      return request<PaginatedBookings>(`/api/v1/bookings${qs ? `?${qs}` : ""}`);
     },
   };
 }

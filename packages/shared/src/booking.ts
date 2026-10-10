@@ -236,8 +236,29 @@ export const bookingSchema = z
 export type BookingDto = z.infer<typeof bookingSchema>;
 
 // ---------------------------------------------------------------------------
-// Detail Schema
+// Detail Schema & Accepted Condition Comparison
 // ---------------------------------------------------------------------------
+
+export const acceptedConditionComparisonSchema = z
+  .object({
+    agreedFormat: z.string(),
+    pitchFormat: z.string(),
+    formatMatches: z.boolean(),
+    agreedWindowStartAt: utcDateTimeSchema,
+    agreedWindowEndAt: utcDateTimeSchema,
+    bookingStartAt: utcDateTimeSchema,
+    bookingEndAt: utcDateTimeSchema,
+    withinWindow: z.boolean(),
+    agreedOriginLat: z.number(),
+    agreedOriginLng: z.number(),
+    agreedRadiusKm: z.number(),
+    pitchLat: z.number().nullable().optional(),
+    pitchLng: z.number().nullable().optional(),
+    pitchDistanceKm: z.number().nullable().optional(),
+    withinRadius: z.boolean(),
+  })
+  .strict();
+export type AcceptedConditionComparison = z.infer<typeof acceptedConditionComparisonSchema>;
 
 export const bookingDetailSchema = bookingSchema
   .extend({
@@ -283,6 +304,8 @@ export const bookingDetailSchema = bookingSchema
         canCancel: z.boolean(),
       })
       .optional(),
+    acceptedConditions: acceptedConditionComparisonSchema.optional(),
+    comparison: acceptedConditionComparisonSchema.optional(),
   })
   .strict();
 export type BookingDetailDto = z.infer<typeof bookingDetailSchema>;
