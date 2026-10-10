@@ -8,3 +8,4 @@ export * from "./pitch";
 export * from "./matchmaking";
 export * from "./booking";
 export * from "./registration-error";
+export * from "./match";

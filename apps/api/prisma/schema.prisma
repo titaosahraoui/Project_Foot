@@ -54,6 +54,10 @@ model User {
   refreshSessions     RefreshSession[]
   organizedChallenges MatchChallenge[]
   organizedBookings   Booking[]        @relation("organizedBookings")
+  homeCaptainMatches  Match[]          @relation("homeCaptainMatches")
+  awayCaptainMatches  Match[]          @relation("awayCaptainMatches")
+  pitchOwnerMatches   Match[]          @relation("pitchOwnerMatches")
+  matchParticipations MatchParticipant[]
 
   @@map("users")
 }
@@ -184,6 +188,9 @@ model Team {
   opponentChallenges   MatchChallenge[]   @relation("opponentChallenges")
   challengerBookings   Booking[]          @relation("challengerBookings")
   opponentBookings     Booking[]          @relation("opponentBookings")
+  homeMatches          Match[]            @relation("homeMatches")
+  awayMatches          Match[]            @relation("awayMatches")
+  matchParticipants    MatchParticipant[]
 
   @@map("teams")
 }
@@ -402,6 +409,7 @@ model Booking {
   organizerUser  User           @relation("organizedBookings", fields: [organizerUserId], references: [id], onDelete: Cascade)
   challengerTeam Team           @relation("challengerBookings", fields: [challengerTeamId], references: [id], onDelete: Cascade)
   opponentTeam   Team           @relation("opponentBookings", fields: [opponentTeamId], references: [id], onDelete: Cascade)
+  match          Match?
 
   @@index([pitchId, status])
   @@index([challengeId])
@@ -429,4 +437,67 @@ model IdempotencyRecord {
   @@unique([actorId, scope, key])
   @@index([expiresAt])
   @@map("idempotency_records")
+}
+
+enum MatchStatus {
+  SCHEDULED
+  AWAITING_RESULTS
+  CONSENSUS_PENDING
+  VERIFIED
+  DISPUTED
+  CANCELLED
+  NO_SHOW
+}
+
+enum MatchParticipantRole {
+  HOME
+  AWAY
+}
+
+model Match {
+  id            String               @id @default(uuid())
+  bookingId     String               @unique
+  homeTeamId    String
+  awayTeamId    String
+  homeCaptainId String
+  awayCaptainId String
+  pitchOwnerId  String
+  startAt       DateTime             @db.Timestamptz(3)
+  endAt         DateTime             @db.Timestamptz(3)
+  format        MatchFormat
+  status        MatchStatus          @default(SCHEDULED)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  booking       Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  homeTeam      Team                 @relation("homeMatches", fields: [homeTeamId], references: [id], onDelete: Cascade)
+  awayTeam      Team                 @relation("awayMatches", fields: [awayTeamId], references: [id], onDelete: Cascade)
+  homeCaptain   User                 @relation("homeCaptainMatches", fields: [homeCaptainId], references: [id], onDelete: Cascade)
+  awayCaptain   User                 @relation("awayCaptainMatches", fields: [awayCaptainId], references: [id], onDelete: Cascade)
+  pitchOwner    User                 @relation("pitchOwnerMatches", fields: [pitchOwnerId], references: [id], onDelete: Cascade)
+  participants  MatchParticipant[]
+
+  @@index([homeTeamId, status])
+  @@index([awayTeamId, status])
+  @@index([pitchOwnerId, status])
+  @@index([startAt, endAt])
+  @@map("matches")
+}
+
+model MatchParticipant {
+  id        String               @id @default(uuid())
+  matchId   String
+  teamId    String
+  captainId String
+  role      MatchParticipantRole @default(HOME)
+  createdAt DateTime             @default(now())
+
+  match     Match                @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  team      Team                 @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  captain   User                 @relation(fields: [captainId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, teamId])
+  @@index([teamId])
+  @@index([captainId])
+  @@map("match_participants")
 }

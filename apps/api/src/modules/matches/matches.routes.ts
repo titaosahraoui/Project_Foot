@@ -1,4 +1,18 @@
-import { createStubRouter } from "../_stub";
+import { Router } from "express";
+import { asyncHandler } from "../../middleware/async-handler";
+import { requireAuth } from "../../middleware/require-auth";
+import * as c from "./matches.controller";
 
-// Phase 5-6: opponent discovery, challenges, matches, results, ratings.
-export const matchesRouter = createStubRouter("matches");
+export const matchesRouter: Router = Router();
+
+matchesRouter.get(
+  "/by-booking/:bookingId",
+  requireAuth,
+  asyncHandler(c.getMatchByBookingHandler),
+);
+
+matchesRouter.get(
+  "/:id",
+  requireAuth,
+  asyncHandler(c.getMatchHandler),
+);
