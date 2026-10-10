@@ -385,16 +385,31 @@ describe("M08-T03: PostgreSQL Booking Collision Protection & Inventory Subtracti
   });
 
   it("permits adjacent bookings to coexist without collision due to half-open interval '[)'", async () => {
+    // Find which challenge won the earlier concurrent race and has an active booking
+    const winningBooking = await prisma.booking.findFirst({
+      where: {
+        pitchId,
+        status: { in: ["PENDING_OWNER_CONFIRMATION", "CONFIRMED"] },
+      },
+    });
+
+    // Use the losing challenge (which has NO active booking) for this adjacent slot test
+    const useChallenge1 = winningBooking?.challengeId === challenge2Id;
+    const losingChallengeId = useChallenge1 ? challenge1Id : challenge2Id;
+    const losingOrganizerId = useChallenge1 ? organizer1Id : organizer2Id;
+    const losingChallengerTeamId = useChallenge1 ? team1Id : team3Id;
+    const losingOpponentTeamId = useChallenge1 ? team2Id : team4Id;
+
     // Adjacent slot: starts exactly at 19:30 when previous booking ends
     const adjacentStart = slotEnd; // 19:30
     const adjacentEndSlot = adjacentEnd; // 21:00
 
     const req: bookingsRepo.CreateBookingData = {
       pitchId,
-      challengeId: challenge2Id,
-      organizerUserId: organizer2Id,
-      challengerTeamId: team3Id,
-      opponentTeamId: team4Id,
+      challengeId: losingChallengeId,
+      organizerUserId: losingOrganizerId,
+      challengerTeamId: losingChallengerTeamId,
+      opponentTeamId: losingOpponentTeamId,
       startAt: adjacentStart,
       endAt: adjacentEndSlot,
       priceAmountMinor: 400000,

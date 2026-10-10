@@ -383,8 +383,8 @@ model Booking {
   organizerUserId       String
   challengerTeamId      String
   opponentTeamId        String
-  startAt               DateTime
-  endAt                 DateTime
+  startAt               DateTime             @db.Timestamptz(3)
+  endAt                 DateTime             @db.Timestamptz(3)
   priceAmountMinor      Int
   currency              String               @default("DZD")
   status                BookingStatus        @default(PENDING_OWNER_CONFIRMATION)

@@ -7,6 +7,7 @@ import {
   type TeamAvailability,
 } from "@footconnect/shared";
 import { generateIdempotencyKey } from "./idempotency";
+import { executeGuardedAction } from "./action-guard";
 import { formatApproximateArea } from "./approximate-area";
 import {
   formatAlgiersDateTime,
@@ -19,12 +20,18 @@ describe("Mobile Challenge Flows (M07-T05)", () => {
   const mockChallengerAvailability: TeamAvailability = {
     id: "avail-challenger-1",
     teamId: "team-challenger-1",
+    createdById: "user-challenger-captain",
     startAt: "2026-10-15T18:00:00.000Z",
     endAt: "2026-10-15T21:00:00.000Z",
     format: "FIVE_A_SIDE",
     radiusKm: 10,
+    eloTolerance: 100,
+    message: null,
     approximateArea: { lat: 36.75, lng: 3.06 },
     status: "OPEN",
+    expiresAt: "2026-10-15T21:00:00.000Z",
+    matchedAt: null,
+    cancelledAt: null,
     createdAt: "2026-10-10T10:00:00.000Z",
     updatedAt: "2026-10-10T10:00:00.000Z",
   };
@@ -197,6 +204,10 @@ describe("Mobile Challenge Flows (M07-T05)", () => {
   describe("4. Role-based Challenge Permissions & Actions", () => {
     const pendingChallenge: MatchChallengeDetail = {
       id: "ch-100",
+      challengerTeamId: "team-challenger-1",
+      opponentTeamId: "team-opponent-2",
+      challengerAvailabilityId: "avail-challenger-1",
+      opponentAvailabilityId: "avail-opponent-2",
       challengerTeam: {
         id: "team-challenger-1",
         name: "Bab El Oued United",
@@ -224,6 +235,18 @@ describe("Mobile Challenge Flows (M07-T05)", () => {
       updatedAt: "2026-10-10T12:00:00.000Z",
       respondedAt: null,
       cancelledAt: null,
+      overlappingWindow: {
+        startAt: "2026-10-15T18:30:00.000Z",
+        endAt: "2026-10-15T20:30:00.000Z",
+        durationMinutes: 120,
+      },
+      conditions: {
+        format: "FIVE_A_SIDE",
+        approximateArea: { lat: 36.75, lng: 3.06 },
+        radiusKm: 10,
+        startAt: "2026-10-15T18:30:00.000Z",
+        endAt: "2026-10-15T20:30:00.000Z",
+      },
     };
 
     it("gives opponent captain accept and decline actions during PENDING", () => {
@@ -362,7 +385,7 @@ describe("Mobile Challenge Flows (M07-T05)", () => {
     it("simulates stale acceptance handling", () => {
       // Simulate state where client still sees PENDING but server is already ACCEPTED
       const clientChallengeStatus = "PENDING";
-      const serverChallengeStatus = "ACCEPTED";
+      const serverChallengeStatus: string = "ACCEPTED";
 
       const handleAcceptAttempt = () => {
         if (serverChallengeStatus !== "PENDING") {

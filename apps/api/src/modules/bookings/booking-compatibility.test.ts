@@ -270,6 +270,36 @@ describe("assertBookingCompatible (unit)", () => {
       const result = assertBookingCompatible(input);
       expect(result.compatible).toBe(true);
     });
+
+    it("rejects with 422 CONDITIONS_VIOLATION when captain evidence is completely missing", () => {
+      const input = createValidInput({
+        isChallengerCaptain: undefined,
+        challengerMemberships: undefined,
+      });
+
+      expect(() => assertBookingCompatible(input)).toThrow(
+        expect.objectContaining({
+          status: 422,
+          code: "CONDITIONS_VIOLATION",
+          message: expect.stringContaining("Actor is not an active captain of the challenger team"),
+        }),
+      );
+    });
+
+    it("rejects with 422 CONDITIONS_VIOLATION when challengerMemberships is empty array", () => {
+      const input = createValidInput({
+        isChallengerCaptain: undefined,
+        challengerMemberships: [],
+      });
+
+      expect(() => assertBookingCompatible(input)).toThrow(
+        expect.objectContaining({
+          status: 422,
+          code: "CONDITIONS_VIOLATION",
+          message: expect.stringContaining("Actor is not an active captain of the challenger team"),
+        }),
+      );
+    });
   });
 
   describe("window containment boundaries (agreement mismatch -> 422 CONDITIONS_VIOLATION)", () => {
@@ -616,6 +646,18 @@ describe("assertBookingCompatible (unit)", () => {
       const input = createValidInput({
         pitch: { ...defaultPitch, availabilityRules: [] },
         availableSlots: [differentSlot],
+      });
+
+      expect(() => assertBookingCompatible(input)).toThrow(
+        expect.objectContaining({
+          status: 409,
+          code: "INVENTORY_CONFLICT",
+        }),
+      );
+    });
+    it("rejects with 409 INVENTORY_CONFLICT when availableSlots is explicitly an empty array even if pitch rules exist", () => {
+      const input = createValidInput({
+        availableSlots: [],
       });
 
       expect(() => assertBookingCompatible(input)).toThrow(

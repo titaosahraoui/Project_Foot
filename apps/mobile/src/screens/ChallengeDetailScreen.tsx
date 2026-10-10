@@ -24,6 +24,7 @@ import { useIdempotencyKey } from "../lib/idempotency";
 import { formatApproximateArea } from "../lib/approximate-area";
 import type { PlayStackParamList } from "../navigation";
 import { fontFamily } from "../theme/fonts";
+import { executeGuardedAction } from "../lib/action-guard";
 
 type Props = NativeStackScreenProps<PlayStackParamList, "ChallengeDetail">;
 
@@ -66,49 +67,37 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
     ]);
   };
 
-  const handleAccept = async () => {
-    if (actionInProgress) return;
-    setActionInProgress("ACCEPT");
-    setLastAction("ACCEPT");
-    setActionError(null);
+  const runGuardedAction = (
+    action: "ACCEPT" | "DECLINE" | "CANCEL",
+    task: () => Promise<void>,
+  ) =>
+    executeGuardedAction(
+      action,
+      {
+        actionInProgress,
+        setActionInProgress,
+        setLastAction,
+        setActionError,
+      },
+      task,
+      () => {
+        void refetch();
+      },
+    );
 
-    try {
+  const handleAccept = async () => {
+    await runGuardedAction("ACCEPT", async () => {
       await api.acceptChallenge(challengeId, acceptKey);
       await invalidateAllChallengeQueries();
-    } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : "Failed to accept challenge. Please check your network and retry.";
-      setActionError(msg);
-      // Automatically refresh challenge state in case of stale state or expiry
-      void refetch();
-    } finally {
-      setActionInProgress(null);
-    }
+    });
   };
 
   const handleDecline = async () => {
-    if (actionInProgress) return;
-
     const executeDecline = async () => {
-      setActionInProgress("DECLINE");
-      setLastAction("DECLINE");
-      setActionError(null);
-
-      try {
+      await runGuardedAction("DECLINE", async () => {
         await api.declineChallenge(challengeId, declineKey);
         await invalidateAllChallengeQueries();
-      } catch (err) {
-        const msg =
-          err instanceof Error
-            ? err.message
-            : "Failed to decline challenge. Please retry.";
-        setActionError(msg);
-        void refetch();
-      } finally {
-        setActionInProgress(null);
-      }
+      });
     };
 
     if (Platform.OS === "web") {
@@ -134,26 +123,11 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
   };
 
   const handleCancel = async () => {
-    if (actionInProgress) return;
-
     const executeCancel = async () => {
-      setActionInProgress("CANCEL");
-      setLastAction("CANCEL");
-      setActionError(null);
-
-      try {
+      await runGuardedAction("CANCEL", async () => {
         await api.cancelChallenge(challengeId, cancelKey);
         await invalidateAllChallengeQueries();
-      } catch (err) {
-        const msg =
-          err instanceof Error
-            ? err.message
-            : "Failed to cancel challenge. Please retry.";
-        setActionError(msg);
-        void refetch();
-      } finally {
-        setActionInProgress(null);
-      }
+      });
     };
 
     if (Platform.OS === "web") {

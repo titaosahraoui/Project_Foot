@@ -54,16 +54,47 @@ export interface FindBlockingBookingRangesFilter {
   to: Date;
 }
 
-const bookingInclude = {
+export const bookingInclude = {
   pitch: true,
-  challengerTeam: true,
-  opponentTeam: true,
+  challengerTeam: {
+    include: {
+      members: true,
+    },
+  },
+  opponentTeam: {
+    include: {
+      members: true,
+    },
+  },
   organizerUser: true,
 } satisfies Prisma.BookingInclude;
 
 export type BookingWithRelations = Prisma.BookingGetPayload<{
   include: typeof bookingInclude;
 }>;
+
+export function isUserRelatedToBooking(
+  booking: BookingWithRelations,
+  userId: string,
+): boolean {
+  if (booking.organizerUserId === userId) return true;
+  if (booking.pitch?.ownerId === userId) return true;
+  if (
+    booking.challengerTeam?.members?.some(
+      (m) => m.userId === userId && m.status === "ACTIVE",
+    )
+  ) {
+    return true;
+  }
+  if (
+    booking.opponentTeam?.members?.some(
+      (m) => m.userId === userId && m.status === "ACTIVE",
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
 
 export function isBookingCollisionError(err: unknown): boolean {
   if (!err) return false;
@@ -195,28 +226,97 @@ export async function findBookings(
   filter: ListBookingsFilter,
   db: RepositoryContext = prisma,
 ): Promise<{ items: BookingWithRelations[]; total: number }> {
-  const where: Prisma.BookingWhereInput = {};
+  // If no viewer userId is provided, return empty set (caller-supplied filters must not grant access)
+  if (!filter.userId) {
+    return { items: [], total: 0 };
+  }
 
+  const conditions: Prisma.BookingWhereInput[] = [];
+
+  // Enforce viewer scope based on role or default relationship
+  if (filter.role === "organizer") {
+    conditions.push({ organizerUserId: filter.userId });
+  } else if (filter.role === "owner") {
+    conditions.push({ pitch: { ownerId: filter.userId } });
+  } else if (filter.role === "captain") {
+    conditions.push({
+      OR: [
+        {
+          challengerTeam: {
+            members: {
+              some: {
+                userId: filter.userId,
+                role: "CAPTAIN",
+                status: "ACTIVE",
+              },
+            },
+          },
+        },
+        {
+          opponentTeam: {
+            members: {
+              some: {
+                userId: filter.userId,
+                role: "CAPTAIN",
+                status: "ACTIVE",
+              },
+            },
+          },
+        },
+      ],
+    });
+  } else {
+    // Default: any booking where viewer is owner, organizer, or active team member
+    conditions.push({
+      OR: [
+        { pitch: { ownerId: filter.userId } },
+        { organizerUserId: filter.userId },
+        {
+          challengerTeam: {
+            members: {
+              some: {
+                userId: filter.userId,
+                status: "ACTIVE",
+              },
+            },
+          },
+        },
+        {
+          opponentTeam: {
+            members: {
+              some: {
+                userId: filter.userId,
+                status: "ACTIVE",
+              },
+            },
+          },
+        },
+      ],
+    });
+  }
+
+  // Caller-supplied narrowing filters
   if (filter.status) {
-    where.status = filter.status;
+    conditions.push({ status: filter.status });
   }
   if (filter.pitchId) {
-    where.pitchId = filter.pitchId;
+    conditions.push({ pitchId: filter.pitchId });
   }
   if (filter.challengeId) {
-    where.challengeId = filter.challengeId;
+    conditions.push({ challengeId: filter.challengeId });
   }
   if (filter.teamId) {
-    where.OR = [
-      { challengerTeamId: filter.teamId },
-      { opponentTeamId: filter.teamId },
-    ];
+    conditions.push({
+      OR: [
+        { challengerTeamId: filter.teamId },
+        { opponentTeamId: filter.teamId },
+      ],
+    });
   }
-  if (filter.userId && filter.role === "organizer") {
-    where.organizerUserId = filter.userId;
-  } else if (filter.userId && filter.role === "owner") {
-    where.pitch = { ownerId: filter.userId };
-  }
+
+  const where: Prisma.BookingWhereInput = {
+    AND: conditions,
+  };
 
   const [items, total] = await Promise.all([
     db.booking.findMany({

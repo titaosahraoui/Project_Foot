@@ -97,8 +97,9 @@ export function readIdempotentResult(
   actorId: string,
   scope: string,
   key: string,
+  context: RepositoryContext = prisma,
 ): Promise<IdempotentResult | null> {
-  return findRecord(actorId, scope, key, prisma);
+  return findRecord(actorId, scope, key, context);
 }
 
 export async function storeIdempotentResult(

@@ -498,4 +498,169 @@ describe("createBooking (integration - M08-T04)", () => {
       }),
     );
   });
+  it("resolves concurrent requests with the exact same actor, key, and payload to the same booking (Issue 3)", async () => {
+    // Decline previous booking so we have a clean slate
+    await prisma.booking.updateMany({
+      where: { challengeId, status: "PENDING_OWNER_CONFIRMATION" },
+      data: { status: "DECLINED", declinedAt: new Date() },
+    });
+
+    const concurrentKey = `key-concurrent-idem-${runId}`;
+    const input: CreateBookingInput = {
+      challengeId,
+      pitchId,
+      startAt: slotStart.toISOString(),
+      endAt: slotEnd.toISOString(),
+    };
+
+    const [res1, res2] = await Promise.all([
+      service.createBooking(organizerId, input, concurrentKey, baseNow),
+      service.createBooking(organizerId, input, concurrentKey, baseNow),
+    ]);
+
+    expect(res1.id).toBeDefined();
+    expect(res2.id).toBeDefined();
+    expect(res1.id).toBe(res2.id);
+    expect(res1.status).toBe("PENDING_OWNER_CONFIRMATION");
+  });
+
+  it("enforces viewer permissions: unrelated user cannot view booking details (Issue 1)", async () => {
+    const activeBooking = await prisma.booking.findFirst({
+      where: { challengeId, status: "PENDING_OWNER_CONFIRMATION" },
+    });
+    expect(activeBooking).not.toBeNull();
+
+    const stranger = await prisma.user.create({
+      data: {
+        email: uniqueEmail(`stranger_${runId}`),
+        passwordHash: password,
+        displayName: "Stranger User",
+        roles: ["PLAYER"],
+      },
+    });
+
+    // Unrelated user throws 403 FORBIDDEN
+    await expect(
+      service.getBookingById(activeBooking!.id, stranger.id),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        status: 403,
+        code: "FORBIDDEN",
+      }),
+    );
+
+    // Unauthenticated access throws 403 FORBIDDEN
+    await expect(
+      service.getBookingById(activeBooking!.id, undefined),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        status: 403,
+        code: "FORBIDDEN",
+      }),
+    );
+
+    // Organizer can view
+    const organizerView = await service.getBookingById(activeBooking!.id, organizerId);
+    expect(organizerView.id).toBe(activeBooking!.id);
+
+    // Pitch owner can view
+    const ownerView = await service.getBookingById(activeBooking!.id, pitchOwnerId);
+    expect(ownerView.id).toBe(activeBooking!.id);
+
+    // Team member can view
+    const memberView = await service.getBookingById(activeBooking!.id, memberId);
+    expect(memberView.id).toBe(activeBooking!.id);
+  });
+
+  it("enforces viewer permissions on listBookings: unscoped and role=captain queries return only viewer's bookings (Issue 1)", async () => {
+    const stranger = await prisma.user.create({
+      data: {
+        email: uniqueEmail(`stranger2_${runId}`),
+        passwordHash: password,
+        displayName: "Stranger User 2",
+        roles: ["PLAYER"],
+      },
+    });
+
+    // Unrelated user with no role filter sees 0 bookings
+    const unscopedResult = await service.listBookings({ page: 1, pageSize: 20 }, stranger.id);
+    expect(unscopedResult.items.length).toBe(0);
+    expect(unscopedResult.total).toBe(0);
+
+    // Unrelated user with role=captain filter sees 0 bookings
+    const captainResult = await service.listBookings({ page: 1, pageSize: 20, role: "captain" as any }, stranger.id);
+    expect(captainResult.items.length).toBe(0);
+    expect(captainResult.total).toBe(0);
+
+    // Organizer sees their booking
+    const organizerList = await service.listBookings({ page: 1, pageSize: 20 }, organizerId);
+    expect(organizerList.items.some((b) => b.organizerUserId === organizerId)).toBe(true);
+
+    // Pitch owner sees booking for their pitch
+    const ownerList = await service.listBookings({ page: 1, pageSize: 20, role: "owner" }, pitchOwnerId);
+    expect(ownerList.items.some((b) => b.pitch?.id === pitchId)).toBe(true);
+  });
+  it("rejects booking creation if challenge was cancelled or pitch block was added concurrently (Issue 2)", async () => {
+    // 1. Decline prior booking to free challenge
+    await prisma.booking.updateMany({
+      where: { challengeId, status: "PENDING_OWNER_CONFIRMATION" },
+      data: { status: "DECLINED", declinedAt: new Date() },
+    });
+
+    // 2. Add an active pitch block overlapping slot
+    const block = await prisma.pitchBlock.create({
+      data: {
+        pitchId,
+        createdById: pitchOwnerId,
+        startAt: slotStart,
+        endAt: slotEnd,
+        reason: "Maintenance",
+      },
+    });
+
+    const keyWithBlock = `key-blocked-${runId}`;
+    const input: CreateBookingInput = {
+      challengeId,
+      pitchId,
+      startAt: slotStart.toISOString(),
+      endAt: slotEnd.toISOString(),
+    };
+
+    await expect(
+      service.createBooking(organizerId, input, keyWithBlock, baseNow),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        status: 409,
+        code: "INVENTORY_CONFLICT",
+      }),
+    );
+
+    // Cancel the block
+    await prisma.pitchBlock.update({
+      where: { id: block.id },
+      data: { cancelledAt: new Date() },
+    });
+
+    // 3. Mark challenge CANCELLED
+    await prisma.matchChallenge.update({
+      where: { id: challengeId },
+      data: { status: "CANCELLED" },
+    });
+
+    const keyCancelled = `key-cancelled-${runId}`;
+    await expect(
+      service.createBooking(organizerId, input, keyCancelled, baseNow),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        status: 409,
+        code: "STATE_CONFLICT",
+      }),
+    );
+
+    // Restore challenge status to ACCEPTED
+    await prisma.matchChallenge.update({
+      where: { id: challengeId },
+      data: { status: "ACCEPTED" },
+    });
+  });
 });

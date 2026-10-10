@@ -270,7 +270,7 @@ export type BookingDetailDto = z.infer<typeof bookingDetailSchema>;
 
 export const paginatedBookingsSchema = z
   .object({
-    items: z.array(bookingSchema),
+    items: z.array(bookingDetailSchema),
     page: z.number().int().min(1),
     pageSize: z.number().int().min(1),
     total: z.number().int().min(0),

@@ -151,6 +151,12 @@ export function assertBookingCompatible(
         "CONDITIONS_VIOLATION",
       );
     }
+  } else {
+    throw new HttpError(
+      422,
+      "Actor is not an active captain of the challenger team",
+      "CONDITIONS_VIOLATION",
+    );
   }
 
   // Parse requested time window
@@ -250,7 +256,7 @@ export function assertBookingCompatible(
   // 7. Requested time is produced by pitch inventory and not blocked
   let matchingSlot: AvailableSlot | undefined;
 
-  if (input.availableSlots && input.availableSlots.length > 0) {
+  if (input.availableSlots !== undefined) {
     matchingSlot = input.availableSlots.find(
       (s) =>
         new Date(s.startAt).getTime() === reqStart.getTime() &&
