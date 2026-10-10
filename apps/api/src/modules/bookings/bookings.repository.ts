@@ -71,12 +71,24 @@ export function isBookingCollisionError(err: unknown): boolean {
   const code = (err as { code?: string })?.code;
   return (
     code === "23P01" ||
-    code === "P2010" ||
-    code === "P2002" ||
     msg.includes("bookings_pitch_time_exclusion") ||
     msg.includes("exclusion constraint") ||
     msg.includes("violates exclusion constraint") ||
-    msg.includes("23P01")
+    msg.includes("23P01") ||
+    (code === "P2010" && msg.includes("exclusion"))
+  );
+}
+
+export function isBookingChallengeConflictError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  const code = (err as { code?: string })?.code;
+  return (
+    code === "23505" ||
+    code === "P2002" ||
+    msg.includes("bookings_challenge_active_unique") ||
+    msg.includes("unique constraint") ||
+    msg.includes("Unique constraint failed")
   );
 }
 
@@ -111,6 +123,13 @@ export async function createBooking(
         409,
         "The requested time slot overlaps with an existing booking on this pitch",
         "INVENTORY_CONFLICT",
+      );
+    }
+    if (isBookingChallengeConflictError(err)) {
+      throw new HttpError(
+        409,
+        "An active booking request already exists for this challenge",
+        "STATE_CONFLICT",
       );
     }
     throw err;

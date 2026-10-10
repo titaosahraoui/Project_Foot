@@ -1,12 +1,24 @@
-import type {
-  BlockingRange,
-  BookingDetailDto,
-  BookingDto,
-  ListBookingsQuery,
-  PaginatedBookings,
+import {
+  calculateOwnerResponseDeadline,
+  createBookingSchema,
+  type BlockingRange,
+  type BookingDetailDto,
+  type BookingDto,
+  type CreateBookingInput,
+  type ListBookingsQuery,
+  type PaginatedBookings,
 } from "@footconnect/shared";
-import type { RepositoryContext } from "../../lib/transaction";
+import {
+  hashIdempotencyRequest,
+  readIdempotentResult,
+  storeIdempotentResult,
+} from "../../lib/idempotency";
+import { withTransaction, type RepositoryContext } from "../../lib/transaction";
 import { HttpError } from "../../middleware/error-handler";
+import * as matchmakingService from "../matchmaking/matchmaking.service";
+import * as pitchesService from "../pitches/pitches.service";
+import * as teamsService from "../teams/teams.service";
+import { assertBookingCompatible } from "./booking-compatibility";
 import * as repo from "./bookings.repository";
 
 export * from "./booking-compatibility";
@@ -110,11 +122,202 @@ export function toBookingDetailDto(
 }
 
 export async function createBooking(
+  actorId: string,
+  input: CreateBookingInput,
+  idempotencyKey?: string,
+  now?: Date,
+  tx?: RepositoryContext,
+): Promise<BookingDto>;
+export async function createBooking(
   data: repo.CreateBookingData,
   db?: RepositoryContext,
+): Promise<BookingDto>;
+export async function createBooking(
+  actorIdOrData: string | repo.CreateBookingData,
+  inputOrDb?: CreateBookingInput | RepositoryContext,
+  idempotencyKey?: string,
+  now: Date = new Date(),
+  tx?: RepositoryContext,
 ): Promise<BookingDto> {
-  const booking = await repo.createBooking(data, db);
-  return toBookingDto(booking);
+  if (typeof actorIdOrData !== "string") {
+    const booking = await repo.createBooking(
+      actorIdOrData,
+      inputOrDb as RepositoryContext,
+    );
+    return toBookingDto(booking);
+  }
+
+  const actorId = actorIdOrData;
+  const rawInput = inputOrDb as CreateBookingInput;
+  const input = createBookingSchema.parse(rawInput);
+  const reqStart = new Date(input.startAt);
+  const reqEnd = new Date(input.endAt);
+
+  const scope = "booking:create";
+  const key = idempotencyKey;
+  const requestPayload = {
+    actorId,
+    challengeId: input.challengeId,
+    pitchId: input.pitchId,
+    startAt: input.startAt,
+    endAt: input.endAt,
+  };
+  const requestHash = hashIdempotencyRequest(requestPayload);
+
+  if (key) {
+    const cached = await readIdempotentResult(actorId, scope, key);
+    if (cached) {
+      if (cached.requestHash !== requestHash) {
+        throw new HttpError(
+          409,
+          "Idempotency key was already used for a different request",
+          "CONFLICT",
+          { scope, key },
+        );
+      }
+      return cached.responseBody as BookingDto;
+    }
+  }
+
+  // Load accepted challenge through matchmaking.service
+  await matchmakingService.expireDueChallenges(now, tx);
+  const challenge = await matchmakingService.getChallengeById(input.challengeId, tx);
+  if (!challenge) {
+    throw new HttpError(404, "Challenge not found");
+  }
+
+  // Verify challenger team and actor captaincy
+  const challengerTeam = await teamsService.getTeam(challenge.challengerTeamId);
+  const isChallengerCaptain = challengerTeam.members.some(
+    (m) =>
+      m.userId === actorId &&
+      (m.role === "CAPTAIN" || (m as any).teamRole === "CAPTAIN"),
+  );
+
+  // Load pitch and exact inventory through pitches.service
+  const pitch = await pitchesService.getPitch(input.pitchId);
+  const durationMinutes = Math.round((reqEnd.getTime() - reqStart.getTime()) / 60000);
+  const availableSlots = await pitchesService.getAvailableSlots(pitch.id, {
+    from: reqStart.toISOString(),
+    to: reqEnd.toISOString(),
+    durationMinutes,
+  });
+
+  // Apply compatibility
+  const compatibility = assertBookingCompatible({
+    challenge: {
+      status: challenge.status,
+      bookingDeadline: challenge.bookingDeadline,
+      organizerUserId: challenge.organizerUserId,
+      challengerTeamId: challenge.challengerTeamId,
+      format: challenge.format,
+      startAt: challenge.startAt,
+      endAt: challenge.endAt,
+      originLat: challenge.originLat,
+      originLng: challenge.originLng,
+      radiusKm: challenge.radiusKm,
+    },
+    actorId,
+    isChallengerCaptain,
+    requestedStartAt: reqStart,
+    requestedEndAt: reqEnd,
+    pitch: {
+      id: pitch.id,
+      isActive: pitch.isActive,
+      size: pitch.size,
+      lat: pitch.lat,
+      lng: pitch.lng,
+      priceAmountMinor: pitch.hourlyRate.amountMinor,
+      currency: pitch.hourlyRate.currency,
+      availabilityRules: pitch.availabilityRules,
+      blocks: pitch.blocks,
+    },
+    availableSlots,
+    now,
+  });
+
+  // Check if there is already an active booking for this challenge
+  const existingActive = await repo.findActiveBookingByChallengeId(challenge.id, tx);
+  if (existingActive) {
+    throw new HttpError(
+      409,
+      "An active booking request already exists for this challenge",
+      "STATE_CONFLICT",
+    );
+  }
+
+  // Calculate owner deadline: earlier of 24h after booking request or 2h before match start
+  const ownerResponseDeadline = calculateOwnerResponseDeadline(now, reqStart);
+
+  const execute = async (client: RepositoryContext) => {
+    if (key) {
+      const inTxCached = await readIdempotentResult(actorId, scope, key);
+      if (inTxCached) {
+        if (inTxCached.requestHash !== requestHash) {
+          throw new HttpError(
+            409,
+            "Idempotency key was already used for a different request",
+            "CONFLICT",
+            { scope, key },
+          );
+        }
+        return inTxCached.responseBody as BookingDto;
+      }
+    }
+
+    const activeInTx = await repo.findActiveBookingByChallengeId(challenge.id, client);
+    if (activeInTx) {
+      throw new HttpError(
+        409,
+        "An active booking request already exists for this challenge",
+        "STATE_CONFLICT",
+      );
+    }
+
+    const created = await repo.createBooking(
+      {
+        pitchId: pitch.id,
+        challengeId: challenge.id,
+        organizerUserId: actorId,
+        challengerTeamId: challenge.challengerTeamId,
+        opponentTeamId: challenge.opponentTeamId,
+        startAt: reqStart,
+        endAt: reqEnd,
+        priceAmountMinor: compatibility.priceAmountMinor,
+        currency: compatibility.currency as "DZD",
+        status: "PENDING_OWNER_CONFIRMATION",
+        paymentStatus: "UNPAID",
+        ownerResponseDeadline,
+      },
+      client,
+    );
+
+    const bookingDto = toBookingDto(created);
+
+    if (key) {
+      await storeIdempotentResult(
+        {
+          actorId,
+          scope,
+          key,
+          requestHash,
+          resourceType: "Booking",
+          resourceId: created.id,
+          responseStatus: 201,
+          responseBody: bookingDto,
+          expiresAt: ownerResponseDeadline,
+        },
+        client,
+      );
+    }
+
+    return bookingDto;
+  };
+
+  if (tx) {
+    return await execute(tx);
+  }
+  return await withTransaction(execute);
 }
 
 export async function getBookingById(
@@ -178,9 +381,9 @@ export async function listBookings(
   });
 
   return {
-    items: items.map(toBookingDto),
+    items: items.map((b) => toBookingDetailDto(b, viewerUserId)),
+    total,
     page,
     pageSize,
-    total,
   };
 }
