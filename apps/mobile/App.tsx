@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
+
 import { colors } from "@footconnect/ui";
 import { fontMap, fontFamily } from "./src/theme/fonts";
 import { Icon, type IconName } from "./src/components/ui";
@@ -25,6 +26,7 @@ import { SendChallengeConfirmationScreen } from "./src/screens/SendChallengeConf
 import { ChallengeInboxScreen } from "./src/screens/ChallengeInboxScreen";
 import { ChallengeOutboxScreen } from "./src/screens/ChallengeOutboxScreen";
 import { ChallengeDetailScreen } from "./src/screens/ChallengeDetailScreen";
+import { ChoosePitchScreen } from "./src/screens/ChoosePitchScreen";
 import { ProfileScreen } from "./src/screens/ProfileScreen";
 import { TeamsListScreen } from "./src/screens/TeamsListScreen";
 import { CreateTeamScreen } from "./src/screens/CreateTeamScreen";
@@ -119,6 +121,11 @@ function PlayNavigator() {
         options={{ title: "Match Challenge" }}
       />
       <PlayStack.Screen
+        name="ChoosePitch"
+        component={ChoosePitchScreen}
+        options={{ title: "Choose a Pitch" }}
+      />
+      <PlayStack.Screen
         name="TeamDetail"
         component={TeamDetailScreen as any}
         options={{ title: "Squad Tactical" }}
@@ -151,7 +158,7 @@ function Tabs() {
         tabBarInactiveTintColor: colors.onSurfaceVariant,
         tabBarStyle: {
           backgroundColor: colors.surfaceContainerHigh,
-          borderTopColor: "rgba(255, 255, 255, 0.08)",
+          borderTopColor: colors.borderSubtle,
           height: 74,
           paddingTop: 8,
           paddingBottom: 14,

@@ -53,6 +53,12 @@ model User {
   pitches             Pitch[]
   refreshSessions     RefreshSession[]
   organizedChallenges MatchChallenge[]
+  organizedBookings   Booking[]        @relation("organizedBookings")
+  homeCaptainMatches  Match[]          @relation("homeCaptainMatches")
+  awayCaptainMatches  Match[]          @relation("awayCaptainMatches")
+  pitchOwnerMatches   Match[]          @relation("pitchOwnerMatches")
+  matchParticipations MatchParticipant[]
+  cancelledBookings   Booking[]        @relation("cancelledBookings")
 
   @@map("users")
 }
@@ -71,6 +77,8 @@ model RefreshSession {
   @@index([expiresAt])
   @@map("refresh_sessions")
 }
+
+// ---- Pitches (owned by the pitches module) ----
 
 enum PitchSurface {
   NATURAL_GRASS
@@ -107,6 +115,7 @@ model Pitch {
 
   availabilityRules PitchAvailabilityRule[]
   blocks            PitchBlock[]
+  bookings          Booking[]
 
   @@map("pitches")
 }
@@ -180,6 +189,12 @@ model Team {
   availabilities       TeamAvailability[]
   challengerChallenges MatchChallenge[]   @relation("challengerChallenges")
   opponentChallenges   MatchChallenge[]   @relation("opponentChallenges")
+  challengerBookings   Booking[]          @relation("challengerBookings")
+  opponentBookings     Booking[]          @relation("opponentBookings")
+  homeMatches          Match[]            @relation("homeMatches")
+  awayMatches          Match[]            @relation("awayMatches")
+  matchParticipants    MatchParticipant[]
+  responsibleBookings  Booking[]          @relation("responsibleBookings")
 
   @@map("teams")
 }
@@ -339,6 +354,7 @@ model MatchChallenge {
   challengerAvailability TeamAvailability @relation("challengerAvailabilityChallenges", fields: [challengerAvailabilityId], references: [id], onDelete: Cascade)
   opponentAvailability   TeamAvailability @relation("opponentAvailabilityChallenges", fields: [opponentAvailabilityId], references: [id], onDelete: Cascade)
   organizerUser          User             @relation(fields: [organizerUserId], references: [id], onDelete: Cascade)
+  bookings               Booking[]
 
   @@index([challengerTeamId, status])
   @@index([opponentTeamId, status])
@@ -348,6 +364,73 @@ model MatchChallenge {
   @@index([status, responseDeadline])
   @@index([status, bookingDeadline])
   @@map("match_challenges")
+}
+
+// ---- Bookings (owned by the bookings module) ----
+
+enum BookingStatus {
+  PENDING_OWNER_CONFIRMATION
+  CONFIRMED
+  DECLINED
+  CANCELLED_BY_TEAM
+  CANCELLED_BY_OWNER
+  EXPIRED
+}
+
+enum OfflinePaymentStatus {
+  UNPAID
+  PAID_AT_VENUE
+  WAIVED
+}
+
+/// A requested or confirmed pitch reservation for an agreed challenge.
+/// Snapshots agreed price and exact scheduled window.
+/// Sequential attempts for one challenge are permitted, but at most one
+/// blocking attempt (PENDING_OWNER_CONFIRMATION or CONFIRMED) exists at a time.
+model Booking {
+  id                    String               @id @default(uuid())
+  pitchId               String
+  challengeId           String
+  organizerUserId       String
+  challengerTeamId      String
+  opponentTeamId        String
+  startAt               DateTime             @db.Timestamptz(3)
+  endAt                 DateTime             @db.Timestamptz(3)
+  priceAmountMinor      Int
+  currency              String               @default("DZD")
+  status                BookingStatus        @default(PENDING_OWNER_CONFIRMATION)
+  paymentStatus         OfflinePaymentStatus @default(UNPAID)
+  ownerResponseDeadline DateTime
+  confirmedAt           DateTime?
+  declinedAt            DateTime?
+  cancelledAt           DateTime?
+  expiresAt             DateTime?
+  cancelledByUserId     String?
+  responsibleTeamId     String?
+  cancellationReason    String?
+  isLateCancellation    Boolean              @default(false)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  pitch           Pitch          @relation(fields: [pitchId], references: [id], onDelete: Cascade)
+  challenge       MatchChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  organizerUser   User           @relation("organizedBookings", fields: [organizerUserId], references: [id], onDelete: Cascade)
+  challengerTeam  Team           @relation("challengerBookings", fields: [challengerTeamId], references: [id], onDelete: Cascade)
+  opponentTeam    Team           @relation("opponentBookings", fields: [opponentTeamId], references: [id], onDelete: Cascade)
+  match           Match?
+  cancelledByUser User?          @relation("cancelledBookings", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
+  responsibleTeam Team?          @relation("responsibleBookings", fields: [responsibleTeamId], references: [id], onDelete: SetNull)
+
+  @@index([pitchId, status])
+  @@index([challengeId])
+  @@index([organizerUserId, status])
+  @@index([challengerTeamId, status])
+  @@index([opponentTeamId, status])
+  @@index([status, ownerResponseDeadline])
+  @@index([pitchId, startAt, endAt])
+  @@index([responsibleTeamId])
+  @@index([cancelledByUserId])
+  @@map("bookings")
 }
 
 model IdempotencyRecord {
@@ -366,4 +449,67 @@ model IdempotencyRecord {
   @@unique([actorId, scope, key])
   @@index([expiresAt])
   @@map("idempotency_records")
+}
+
+enum MatchStatus {
+  SCHEDULED
+  AWAITING_RESULTS
+  CONSENSUS_PENDING
+  VERIFIED
+  DISPUTED
+  CANCELLED
+  NO_SHOW
+}
+
+enum MatchParticipantRole {
+  HOME
+  AWAY
+}
+
+model Match {
+  id            String               @id @default(uuid())
+  bookingId     String               @unique
+  homeTeamId    String
+  awayTeamId    String
+  homeCaptainId String
+  awayCaptainId String
+  pitchOwnerId  String
+  startAt       DateTime             @db.Timestamptz(3)
+  endAt         DateTime             @db.Timestamptz(3)
+  format        MatchFormat
+  status        MatchStatus          @default(SCHEDULED)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  booking       Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  homeTeam      Team                 @relation("homeMatches", fields: [homeTeamId], references: [id], onDelete: Cascade)
+  awayTeam      Team                 @relation("awayMatches", fields: [awayTeamId], references: [id], onDelete: Cascade)
+  homeCaptain   User                 @relation("homeCaptainMatches", fields: [homeCaptainId], references: [id], onDelete: Cascade)
+  awayCaptain   User                 @relation("awayCaptainMatches", fields: [awayCaptainId], references: [id], onDelete: Cascade)
+  pitchOwner    User                 @relation("pitchOwnerMatches", fields: [pitchOwnerId], references: [id], onDelete: Cascade)
+  participants  MatchParticipant[]
+
+  @@index([homeTeamId, status])
+  @@index([awayTeamId, status])
+  @@index([pitchOwnerId, status])
+  @@index([startAt, endAt])
+  @@map("matches")
+}
+
+model MatchParticipant {
+  id        String               @id @default(uuid())
+  matchId   String
+  teamId    String
+  captainId String
+  role      MatchParticipantRole @default(HOME)
+  createdAt DateTime             @default(now())
+
+  match     Match                @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  team      Team                 @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  captain   User                 @relation(fields: [captainId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, teamId])
+  @@index([teamId])
+  @@index([captainId])
+  @@map("match_participants")
 }

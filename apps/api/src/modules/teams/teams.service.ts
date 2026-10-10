@@ -11,7 +11,7 @@ import type {
   UpdateTeamInput,
 } from "@footconnect/shared";
 import { HttpError } from "../../middleware/error-handler";
-import { withTransaction } from "../../lib/transaction";
+import { withTransaction, type RepositoryContext } from "../../lib/transaction";
 import * as ratingsService from "../ratings/ratings.service";
 import { validateLineup } from "./lineup-rules";
 import * as matchesAdapter from "./matches.adapter";
@@ -97,6 +97,23 @@ export async function assertActiveCaptain(
     throw new HttpError(403, "Only the team captain can do that");
   }
   return team;
+}
+
+export async function getActiveCaptainId(
+  teamId: string,
+  tx?: RepositoryContext,
+): Promise<string> {
+  const team = await repo.findTeamById(teamId, tx);
+  if (!team) {
+    throw new HttpError(404, "Team not found", "NOT_FOUND");
+  }
+  const captain = team.members.find(
+    (m) => m.role === "CAPTAIN" && m.status === "ACTIVE",
+  );
+  if (!captain) {
+    throw new HttpError(404, "Active captain not found for team", "NOT_FOUND");
+  }
+  return captain.userId;
 }
 
 export async function createTeam(userId: string, input: CreateTeamInput): Promise<TeamDetail> {

@@ -1722,3 +1722,13 @@ export async function listOutboxChallenges(
 
   return { items, page, pageSize, total };
 }
+
+/**
+ * Loads a challenge by id directly from persistence.
+ */
+export async function getChallengeById(
+  challengeId: string,
+  tx?: RepositoryContext,
+): Promise<MatchChallengeRecord | null> {
+  return repo.findChallengeById(challengeId, tx);
+}
