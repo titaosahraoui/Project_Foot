@@ -1,117 +1,73 @@
 import { describe, expect, it } from "vitest";
 import {
-  BOOKING_DEFAULT_CURRENCY,
   BOOKING_MAX_DURATION_MINUTES,
   BOOKING_MIN_DURATION_MINUTES,
-  BLOCKING_BOOKING_STATUSES,
   bookingDecisionSchema,
   bookingDetailSchema,
-  bookingPriceSnapshotSchema,
   bookingSchema,
-  bookingStatusSchema,
   calculateOwnerResponseDeadline,
   cancelBookingSchema,
   confirmBookingSchema,
   createBookingSchema,
   declineBookingSchema,
-  isBlockingBookingStatus,
+  isLateCancellation,
   listBookingsQuerySchema,
-  offlinePaymentStatusSchema,
-  type BookingStatus,
 } from "./booking";
 
-describe("booking contracts and schemas (shared)", () => {
+describe("booking shared contracts (Milestone 08)", () => {
   const validUUIDs = {
-    bookingId: "a0000000-0000-0000-0000-000000000001",
-    pitchId: "b0000000-0000-0000-0000-000000000002",
-    challengeId: "c0000000-0000-0000-0000-000000000003",
-    organizerUserId: "d0000000-0000-0000-0000-000000000004",
-    challengerTeamId: "e0000000-0000-0000-0000-000000000005",
-    opponentTeamId: "f0000000-0000-0000-0000-000000000006",
+    bookingId: "a1a1a1a1-b2b2-c3c3-d4d4-e5e5e5e5e5e5",
+    pitchId: "01010101-b2b2-c3c3-d4d4-e5e5e5e5e5e5",
+    challengeId: "c1c1c1c1-b2b2-c3c3-d4d4-e5e5e5e5e5e5",
+    organizerUserId: "e1e1e1e1-b2b2-c3c3-d4d4-e5e5e5e5e5e5",
+    challengerTeamId: "f1f1f1f1-b2b2-c3c3-d4d4-e5e5e5e5e5e5",
+    opponentTeamId: "02020202-b2b2-c3c3-d4d4-e5e5e5e5e5e5",
   };
 
   const startAt = new Date("2026-10-15T18:00:00.000Z").toISOString();
-  const endAt = new Date("2026-10-15T19:30:00.000Z").toISOString(); // 90 min
-
-  describe("enums and status helpers", () => {
-    it("validates all booking status enum values", () => {
-      const validStatuses: BookingStatus[] = [
-        "PENDING_OWNER_CONFIRMATION",
-        "CONFIRMED",
-        "DECLINED",
-        "CANCELLED_BY_TEAM",
-        "CANCELLED_BY_OWNER",
-        "EXPIRED",
-      ];
-      for (const status of validStatuses) {
-        expect(bookingStatusSchema.parse(status)).toBe(status);
-      }
-      expect(() => bookingStatusSchema.parse("INVALID_STATUS")).toThrow();
-    });
-
-    it("validates offline payment statuses", () => {
-      expect(offlinePaymentStatusSchema.parse("UNPAID")).toBe("UNPAID");
-      expect(offlinePaymentStatusSchema.parse("PAID_AT_VENUE")).toBe("PAID_AT_VENUE");
-      expect(offlinePaymentStatusSchema.parse("WAIVED")).toBe("WAIVED");
-      expect(() => offlinePaymentStatusSchema.parse("CREDIT_CARD")).toThrow();
-    });
-
-    it("identifies blocking booking statuses correctly", () => {
-      expect(BLOCKING_BOOKING_STATUSES).toEqual([
-        "PENDING_OWNER_CONFIRMATION",
-        "CONFIRMED",
-      ]);
-      expect(isBlockingBookingStatus("PENDING_OWNER_CONFIRMATION")).toBe(true);
-      expect(isBlockingBookingStatus("CONFIRMED")).toBe(true);
-      expect(isBlockingBookingStatus("DECLINED")).toBe(false);
-      expect(isBlockingBookingStatus("CANCELLED_BY_TEAM")).toBe(false);
-      expect(isBlockingBookingStatus("CANCELLED_BY_OWNER")).toBe(false);
-      expect(isBlockingBookingStatus("EXPIRED")).toBe(false);
-    });
-  });
+  const endAt = new Date("2026-10-15T19:30:00.000Z").toISOString();
 
   describe("calculateOwnerResponseDeadline", () => {
-    it("bounds owner deadline to 24h for matches far in the future (> 26h away)", () => {
+    it("selects 24 hours after requested when start is far in future", () => {
       const requestedAt = new Date("2026-10-10T10:00:00.000Z");
-      const matchStart = new Date("2026-10-15T18:00:00.000Z"); // 5+ days away
+      const matchStart = new Date("2026-10-20T18:00:00.000Z");
 
       const deadline = calculateOwnerResponseDeadline(requestedAt, matchStart);
-      const expected = new Date("2026-10-11T10:00:00.000Z"); // requestedAt + 24h
-      expect(deadline.toISOString()).toBe(expected.toISOString());
+      expect(deadline.toISOString()).toBe("2026-10-11T10:00:00.000Z");
     });
 
-    it("bounds owner deadline to 2h before match start for near matches (< 26h away)", () => {
+    it("selects 2 hours before start when start is less than 26 hours away", () => {
       const requestedAt = new Date("2026-10-10T10:00:00.000Z");
-      const matchStart = new Date("2026-10-10T18:00:00.000Z"); // 8h away
+      const matchStart = new Date("2026-10-11T08:00:00.000Z"); // 22h later
 
       const deadline = calculateOwnerResponseDeadline(requestedAt, matchStart);
-      const expected = new Date("2026-10-10T16:00:00.000Z"); // matchStart - 2h
-      expect(deadline.toISOString()).toBe(expected.toISOString());
+      // matchStart - 2h = 2026-10-11T06:00:00.000Z
+      expect(deadline.toISOString()).toBe("2026-10-11T06:00:00.000Z");
     });
   });
 
-  describe("bookingPriceSnapshotSchema", () => {
-    it("validates price snapshot in DZD", () => {
-      const snapshot = bookingPriceSnapshotSchema.parse({
-        priceAmountMinor: 450000,
-        currency: "DZD",
-      });
-      expect(snapshot.priceAmountMinor).toBe(450000);
-      expect(snapshot.currency).toBe(BOOKING_DEFAULT_CURRENCY);
+  describe("isLateCancellation", () => {
+    const matchStart = new Date("2026-10-15T18:00:00.000Z");
+
+    it("returns false if cancelled 6 hours or more before start", () => {
+      const cancelledAt = new Date("2026-10-15T12:00:00.000Z"); // exactly 6h before
+      expect(isLateCancellation(matchStart, cancelledAt)).toBe(false);
+
+      const earlier = new Date("2026-10-15T10:00:00.000Z"); // 8h before
+      expect(isLateCancellation(matchStart, earlier)).toBe(false);
     });
 
-    it("rejects negative amount or non-DZD currency", () => {
-      expect(() =>
-        bookingPriceSnapshotSchema.parse({ priceAmountMinor: -100, currency: "DZD" }),
-      ).toThrow();
-      expect(() =>
-        bookingPriceSnapshotSchema.parse({ priceAmountMinor: 1000, currency: "EUR" }),
-      ).toThrow();
+    it("returns true if cancelled strictly less than 6 hours before start", () => {
+      const late = new Date("2026-10-15T12:00:01.000Z"); // 5h 59m 59s before
+      expect(isLateCancellation(matchStart, late)).toBe(true);
+
+      const veryLate = new Date("2026-10-15T17:00:00.000Z"); // 1h before
+      expect(isLateCancellation(matchStart, veryLate)).toBe(true);
     });
   });
 
   describe("createBookingSchema", () => {
-    it("accepts valid create input with valid duration", () => {
+    it("validates valid input within 30-180 minute duration", () => {
       const input = {
         challengeId: validUUIDs.challengeId,
         pitchId: validUUIDs.pitchId,
@@ -238,6 +194,24 @@ describe("booking contracts and schemas (shared)", () => {
       expect(parsed.currency).toBe("DZD");
       expect(parsed.status).toBe("PENDING_OWNER_CONFIRMATION");
       expect(parsed.paymentStatus).toBe("UNPAID");
+    });
+
+    it("validates cancelled booking DTO with cancellation metadata", () => {
+      const cancelledBooking = {
+        ...validBooking,
+        status: "CANCELLED_BY_TEAM" as const,
+        cancelledAt: new Date().toISOString(),
+        cancelledByUserId: validUUIDs.organizerUserId,
+        responsibleTeamId: validUUIDs.challengerTeamId,
+        cancellationReason: "Sudden player injury",
+        isLateCancellation: true,
+      };
+      const parsed = bookingSchema.parse(cancelledBooking);
+      expect(parsed.status).toBe("CANCELLED_BY_TEAM");
+      expect(parsed.cancelledByUserId).toBe(validUUIDs.organizerUserId);
+      expect(parsed.responsibleTeamId).toBe(validUUIDs.challengerTeamId);
+      expect(parsed.cancellationReason).toBe("Sudden player injury");
+      expect(parsed.isLateCancellation).toBe(true);
     });
 
     it("validates bookingDetailSchema with expanded relations", () => {

@@ -84,3 +84,17 @@ export async function createScheduledMatch(
     include: matchWithParticipantsInclude,
   });
 }
+
+export async function updateMatchStatusByBookingId(
+  bookingId: string,
+  status: MatchStatus,
+  db: RepositoryContext = prisma,
+): Promise<MatchWithParticipants | null> {
+  const existing = await db.match.findUnique({ where: { bookingId } });
+  if (!existing) return null;
+  return db.match.update({
+    where: { bookingId },
+    data: { status },
+    include: matchWithParticipantsInclude,
+  });
+}

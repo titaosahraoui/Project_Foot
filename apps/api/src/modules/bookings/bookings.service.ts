@@ -1,10 +1,14 @@
 import {
   calculateOwnerResponseDeadline,
   createBookingSchema,
+  isLateCancellation,
   type BlockingRange,
   type BookingDetailDto,
   type BookingDto,
+  type CancelBookingInput,
+  type ConfirmBookingInput,
   type CreateBookingInput,
+  type DeclineBookingInput,
   type ListBookingsQuery,
   type PaginatedBookings,
 } from "@footconnect/shared";
@@ -15,6 +19,7 @@ import {
 } from "../../lib/idempotency";
 import { withTransaction, type RepositoryContext } from "../../lib/transaction";
 import { HttpError } from "../../middleware/error-handler";
+import * as matchesService from "../matches/matches.service";
 import * as matchmakingService from "../matchmaking/matchmaking.service";
 import { assertBookingCompatible } from "./booking-compatibility";
 import * as repo from "./bookings.repository";
@@ -62,6 +67,10 @@ export function toBookingDto(booking: repo.BookingWithRelations | any): BookingD
         ? booking.expiresAt.toISOString()
         : booking.expiresAt
       : null,
+    cancelledByUserId: booking.cancelledByUserId ?? null,
+    responsibleTeamId: booking.responsibleTeamId ?? null,
+    cancellationReason: booking.cancellationReason ?? null,
+    isLateCancellation: Boolean(booking.isLateCancellation),
     createdAt:
       booking.createdAt instanceof Date
         ? booking.createdAt.toISOString()
@@ -78,8 +87,20 @@ export function toBookingDetailDto(
   viewerUserId?: string,
 ): BookingDetailDto {
   const base = toBookingDto(booking);
-  const isOwner = viewerUserId && booking.pitch.ownerId === viewerUserId;
+  const isOwner = viewerUserId && booking.pitch?.ownerId === viewerUserId;
   const isOrganizer = viewerUserId && booking.organizerUserId === viewerUserId;
+  const isChallengerCaptain =
+    viewerUserId &&
+    (booking.challengerTeam?.members?.some(
+      (m) => m.userId === viewerUserId && m.role === "CAPTAIN" && m.status === "ACTIVE",
+    ) ||
+      booking.match?.homeCaptainId === viewerUserId);
+  const isOpponentCaptain =
+    viewerUserId &&
+    (booking.opponentTeam?.members?.some(
+      (m) => m.userId === viewerUserId && m.role === "CAPTAIN" && m.status === "ACTIVE",
+    ) ||
+      booking.match?.awayCaptainId === viewerUserId);
 
   return {
     ...base,
@@ -109,13 +130,14 @@ export function toBookingDetailDto(
       displayName: booking.organizerUser.displayName,
       email: booking.organizerUser.email,
     },
-    matchId: null,
+    matchId: booking.match?.id ?? null,
     viewerPermissions: {
       canConfirm: Boolean(isOwner && booking.status === "PENDING_OWNER_CONFIRMATION"),
       canDecline: Boolean(isOwner && booking.status === "PENDING_OWNER_CONFIRMATION"),
       canCancel: Boolean(
-        isOrganizer &&
-          (booking.status === "PENDING_OWNER_CONFIRMATION" || booking.status === "CONFIRMED"),
+        (booking.status === "PENDING_OWNER_CONFIRMATION" && isOrganizer) ||
+          (booking.status === "CONFIRMED" &&
+            (isOwner || isChallengerCaptain || isOpponentCaptain)),
       ),
     },
   };
@@ -133,98 +155,59 @@ export async function createBooking(
   db?: RepositoryContext,
 ): Promise<BookingDto>;
 export async function createBooking(
-  actorIdOrData: string | repo.CreateBookingData,
+  actorOrData: string | repo.CreateBookingData,
   inputOrDb?: CreateBookingInput | RepositoryContext,
   idempotencyKey?: string,
-  now: Date = new Date(),
-  tx?: RepositoryContext,
+  nowDate?: Date,
+  maybeTx?: RepositoryContext,
 ): Promise<BookingDto> {
-  if (typeof actorIdOrData !== "string") {
-    const booking = await repo.createBooking(
-      actorIdOrData,
-      inputOrDb as RepositoryContext,
+  // Legacy / direct repository creation path
+  if (typeof actorOrData !== "string") {
+    const rawCreated = await repo.createBooking(
+      actorOrData,
+      inputOrDb as RepositoryContext | undefined,
     );
-    return toBookingDto(booking);
+    return toBookingDto(rawCreated);
   }
 
-  const actorId = actorIdOrData;
-  const rawInput = inputOrDb as CreateBookingInput;
-  const input = createBookingSchema.parse(rawInput);
-  const reqStart = new Date(input.startAt);
-  const reqEnd = new Date(input.endAt);
+  const actorId = actorOrData;
+  const input = inputOrDb as CreateBookingInput;
+  const key = idempotencyKey?.trim();
+  const now = nowDate ?? new Date();
+  const tx = maybeTx;
 
-  const scope = "booking:create";
-  const key = idempotencyKey;
-  const requestPayload = {
-    actorId,
-    challengeId: input.challengeId,
-    pitchId: input.pitchId,
-    startAt: input.startAt,
-    endAt: input.endAt,
-  };
-  const requestHash = hashIdempotencyRequest(requestPayload);
+  const scope = "bookings.create";
+  const requestHash = hashIdempotencyRequest(input);
 
-  // If this key is already in flight in the same process, wait for it
+  // Check stored idempotency record outside transaction
   if (key) {
-    const flightKey = `${actorId}:${scope}:${key}`;
-    const inFlight = inFlightBookingRequests.get(flightKey);
-    if (inFlight) {
-      try {
-        const res = await inFlight;
-        const cached = await readIdempotentResult(actorId, scope, key);
-        if (cached) {
-          if (cached.requestHash !== requestHash) {
-            throw new HttpError(
-              409,
-              "Idempotency key was already used for a different request",
-              "CONFLICT",
-              { scope, key },
-            );
-          }
-          return cached.responseBody as BookingDto;
-        }
-        return res;
-      } catch {
-        // If prior in-flight request threw, check if it was cached before letting this proceed
-        const cached = await readIdempotentResult(actorId, scope, key);
-        if (cached) {
-          if (cached.requestHash === requestHash) {
-            return cached.responseBody as BookingDto;
-          }
-          throw new HttpError(
-            409,
-            "Idempotency key was already used for a different request",
-            "CONFLICT",
-            { scope, key },
-          );
-        }
+    const existingRecord = await readIdempotentResult(actorId, scope, key);
+    if (existingRecord) {
+      if (existingRecord.requestHash !== requestHash) {
+        throw new HttpError(
+          409,
+          "Idempotency key was already used for a different request",
+          "CONFLICT",
+          { scope, key },
+        );
       }
+      return existingRecord.responseBody as BookingDto;
+    }
+
+    const flightKey = `${actorId}:${scope}:${key}`;
+    const pendingPromise = inFlightBookingRequests.get(flightKey);
+    if (pendingPromise) {
+      return await pendingPromise;
     }
   }
 
   const doCreate = async (): Promise<BookingDto> => {
-    // 1. Initial idempotency read
-    if (key) {
-      const cached = await readIdempotentResult(actorId, scope, key);
-      if (cached) {
-        if (cached.requestHash !== requestHash) {
-          throw new HttpError(
-            409,
-            "Idempotency key was already used for a different request",
-            "CONFLICT",
-            { scope, key },
-          );
-        }
-        return cached.responseBody as BookingDto;
-      }
-    }
-
-    const execute = async (client: RepositoryContext) => {
-      // Re-check idempotency in transaction
+    const execute = async (client: RepositoryContext): Promise<BookingDto> => {
+      // Check stored idempotency inside transaction
       if (key) {
-        const inTxCached = await readIdempotentResult(actorId, scope, key, client);
-        if (inTxCached) {
-          if (inTxCached.requestHash !== requestHash) {
+        const stored = await readIdempotentResult(actorId, scope, key, client);
+        if (stored) {
+          if (stored.requestHash !== requestHash) {
             throw new HttpError(
               409,
               "Idempotency key was already used for a different request",
@@ -232,82 +215,32 @@ export async function createBooking(
               { scope, key },
             );
           }
-          return inTxCached.responseBody as BookingDto;
+          return stored.responseBody as BookingDto;
         }
       }
 
-      // Expire due challenges in tx
-      await matchmakingService.expireDueChallenges(now, client);
-
-      // Lock challenge row with SELECT ... FOR UPDATE to share locks with competing updates
-      const rawChallenges = await client.$queryRaw<
-        Array<{
-          id: string;
-          challengerAvailabilityId: string;
-          opponentAvailabilityId: string;
-          challengerTeamId: string;
-          opponentTeamId: string;
-          organizerUserId: string;
-          format: string;
-          startAt: Date;
-          endAt: Date;
-          originLat: number;
-          originLng: number;
-          radiusKm: number;
-          responseDeadline: Date;
-          bookingDeadline: Date | null;
-          status: string;
-        }>
-      >`
-        SELECT id, "challengerAvailabilityId", "opponentAvailabilityId", "challengerTeamId",
-               "opponentTeamId", "organizerUserId", format, "startAt", "endAt",
-               "originLat", "originLng", "radiusKm", "responseDeadline", "bookingDeadline", status
-        FROM match_challenges
-        WHERE id = ${input.challengeId}
-        FOR UPDATE
-      `;
-
-      const challenge = rawChallenges[0];
-      if (!challenge) {
-        throw new HttpError(404, "Challenge not found");
-      }
-
-      if (challenge.status !== "ACCEPTED") {
-        throw new HttpError(
-          409,
-          `Challenge is not in ACCEPTED status (current: ${challenge.status})`,
-          "STATE_CONFLICT",
-        );
-      }
-
-      if (!challenge.bookingDeadline) {
-        throw new HttpError(
-          409,
-          "Challenge has no active booking deadline",
-          "STATE_CONFLICT",
-        );
-      }
-
-      if (now.getTime() >= new Date(challenge.bookingDeadline).getTime()) {
-        throw new HttpError(
-          409,
-          "Challenge booking deadline has passed",
-          "STATE_CONFLICT",
-        );
-      }
-
-      // Verify challenger captaincy in tx
-      const captainMembership = await client.teamMembership.findFirst({
-        where: {
-          teamId: challenge.challengerTeamId,
-          userId: actorId,
-          role: "CAPTAIN",
-          status: "ACTIVE",
+      // Load accepted challenge via client to lock/verify latest state
+      const challenge = await client.matchChallenge.findUnique({
+        where: { id: input.challengeId },
+        include: {
+          challengerTeam: {
+            include: {
+              members: {
+                where: { userId: actorId, status: "ACTIVE" },
+              },
+            },
+          },
         },
       });
-      const isChallengerCaptain = Boolean(captainMembership);
 
-      // Load pitch with rules and blocks in tx
+      if (!challenge) {
+        throw new HttpError(404, "Challenge not found", "NOT_FOUND");
+      }
+
+      const activeMember = challenge.challengerTeam.members[0];
+      const isChallengerCaptain = activeMember?.role === "CAPTAIN";
+
+      // Load pitch with rules and blocks via client
       const pitch = await client.pitch.findUnique({
         where: { id: input.pitchId },
         include: {
@@ -315,8 +248,16 @@ export async function createBooking(
           blocks: { where: { cancelledAt: null } },
         },
       });
+
       if (!pitch) {
-        throw new HttpError(404, "Pitch not found");
+        throw new HttpError(404, "Pitch not found", "NOT_FOUND");
+      }
+
+      const reqStart = new Date(input.startAt);
+      const reqEnd = new Date(input.endAt);
+
+      if (Number.isNaN(reqStart.getTime()) || Number.isNaN(reqEnd.getTime())) {
+        throw new HttpError(400, "Invalid startAt or endAt date format", "VALIDATION_ERROR");
       }
 
       const rules = pitch.availabilityRules.map((r) => ({
@@ -586,4 +527,392 @@ export async function listBookings(
     page,
     pageSize,
   };
+}
+
+/**
+ * Confirms a pending booking.
+ * Only the owning PITCH_OWNER acts before response deadline.
+ * Atomically transitions status to CONFIRMED and schedules match in the same transaction.
+ * Match failure rolls back confirmation.
+ * Repeated confirmation is idempotent. Conflicting state throws 409.
+ */
+export async function confirmBooking(
+  ownerId: string,
+  bookingId: string,
+  now: Date = new Date(),
+  input?: ConfirmBookingInput,
+): Promise<BookingDto> {
+  const existing = await repo.findBookingById(bookingId);
+  if (!existing) {
+    throw new HttpError(404, "Booking not found", "NOT_FOUND");
+  }
+
+  // Only the owning PITCH_OWNER acts
+  if (existing.pitch.ownerId !== ownerId) {
+    throw new HttpError(
+      403,
+      "Only the pitch owner can confirm this booking",
+      "FORBIDDEN",
+    );
+  }
+
+  // Repeated same decision is idempotent
+  if (existing.status === "CONFIRMED") {
+    return toBookingDto(existing);
+  }
+
+  // Opposite / stale decision returns 409 STATE_CONFLICT
+  if (existing.status !== "PENDING_OWNER_CONFIRMATION") {
+    throw new HttpError(
+      409,
+      `Cannot confirm booking with status ${existing.status}`,
+      "STATE_CONFLICT",
+    );
+  }
+
+  // Act before response deadline
+  if (now.getTime() >= existing.ownerResponseDeadline.getTime()) {
+    throw new HttpError(
+      409,
+      "Owner response deadline has expired",
+      "STATE_CONFLICT",
+    );
+  }
+
+  return withTransaction(async (tx) => {
+    const fresh = await repo.findBookingById(bookingId, tx);
+    if (!fresh) {
+      throw new HttpError(404, "Booking not found", "NOT_FOUND");
+    }
+    if (fresh.status === "CONFIRMED") {
+      return toBookingDto(fresh);
+    }
+    if (fresh.status !== "PENDING_OWNER_CONFIRMATION") {
+      throw new HttpError(
+        409,
+        `Cannot confirm booking with status ${fresh.status}`,
+        "STATE_CONFLICT",
+      );
+    }
+    if (now.getTime() >= fresh.ownerResponseDeadline.getTime()) {
+      throw new HttpError(
+        409,
+        "Owner response deadline has expired",
+        "STATE_CONFLICT",
+      );
+    }
+
+    const updated = await repo.updateBooking(
+      bookingId,
+      {
+        status: "CONFIRMED",
+        confirmedAt: now,
+      },
+      tx,
+    );
+
+    // Call matches.service.scheduleFromConfirmedBooking in the same transaction
+    await matchesService.scheduleFromConfirmedBooking(
+      {
+        bookingId: fresh.id,
+        homeTeamId: fresh.challengerTeamId,
+        awayTeamId: fresh.opponentTeamId,
+        pitchOwnerId: fresh.pitch.ownerId,
+        startAt: fresh.startAt,
+        endAt: fresh.endAt,
+        format: fresh.challenge.format,
+      },
+      tx,
+    );
+
+    const reloaded = await repo.findBookingById(bookingId, tx);
+    return toBookingDto(reloaded ?? updated);
+  });
+}
+
+/**
+ * Declines a pending booking.
+ * Only the owning PITCH_OWNER acts before response deadline.
+ * Releases inventory and leaves challenge ACCEPTED until booking deadline.
+ * Repeated decline is idempotent. Conflicting state throws 409.
+ */
+export async function declineBooking(
+  ownerId: string,
+  bookingId: string,
+  now: Date = new Date(),
+  input?: DeclineBookingInput,
+): Promise<BookingDto> {
+  const existing = await repo.findBookingById(bookingId);
+  if (!existing) {
+    throw new HttpError(404, "Booking not found", "NOT_FOUND");
+  }
+
+  // Only the owning PITCH_OWNER acts
+  if (existing.pitch.ownerId !== ownerId) {
+    throw new HttpError(
+      403,
+      "Only the pitch owner can decline this booking",
+      "FORBIDDEN",
+    );
+  }
+
+  // Repeated same decision is idempotent
+  if (existing.status === "DECLINED") {
+    return toBookingDto(existing);
+  }
+
+  // Opposite / stale decision returns 409 STATE_CONFLICT
+  if (existing.status !== "PENDING_OWNER_CONFIRMATION") {
+    throw new HttpError(
+      409,
+      `Cannot decline booking with status ${existing.status}`,
+      "STATE_CONFLICT",
+    );
+  }
+
+  // Act before response deadline
+  if (now.getTime() >= existing.ownerResponseDeadline.getTime()) {
+    throw new HttpError(
+      409,
+      "Owner response deadline has expired",
+      "STATE_CONFLICT",
+    );
+  }
+
+  return withTransaction(async (tx) => {
+    const fresh = await repo.findBookingById(bookingId, tx);
+    if (!fresh) {
+      throw new HttpError(404, "Booking not found", "NOT_FOUND");
+    }
+    if (fresh.status === "DECLINED") {
+      return toBookingDto(fresh);
+    }
+    if (fresh.status !== "PENDING_OWNER_CONFIRMATION") {
+      throw new HttpError(
+        409,
+        `Cannot decline booking with status ${fresh.status}`,
+        "STATE_CONFLICT",
+      );
+    }
+    if (now.getTime() >= fresh.ownerResponseDeadline.getTime()) {
+      throw new HttpError(
+        409,
+        "Owner response deadline has expired",
+        "STATE_CONFLICT",
+      );
+    }
+
+    const updated = await repo.updateBooking(
+      bookingId,
+      {
+        status: "DECLINED",
+        declinedAt: now,
+        cancellationReason: input?.reason ?? null,
+      },
+      tx,
+    );
+
+    const reloaded = await repo.findBookingById(bookingId, tx);
+    return toBookingDto(reloaded ?? updated);
+  });
+}
+
+/**
+ * Cancels a booking before or after confirmation.
+ * Before confirmation: Only organizer cancels.
+ * After confirmation: Designated captain (challenger or opponent) or pitch owner cancels.
+ * In the same transaction: sets status, cancels Match if present, releases inventory.
+ * Early vs late (< 6h) classification applies to team cancellations.
+ * Repeated cancellation by same actor is idempotent. Conflicting actor throws 409.
+ */
+export async function cancelBooking(
+  actorId: string,
+  bookingId: string,
+  input?: CancelBookingInput,
+  now: Date = new Date(),
+): Promise<BookingDto> {
+  const booking = await repo.findBookingById(bookingId);
+  if (!booking) {
+    throw new HttpError(404, "Booking not found", "NOT_FOUND");
+  }
+
+  // Repeated same cancellation is idempotent; a different actor after cancellation conflicts
+  if (
+    booking.status === "CANCELLED_BY_TEAM" ||
+    booking.status === "CANCELLED_BY_OWNER"
+  ) {
+    if (booking.cancelledByUserId === actorId) {
+      return toBookingDto(booking);
+    }
+    throw new HttpError(
+      409,
+      "Booking has already been cancelled",
+      "STATE_CONFLICT",
+    );
+  }
+
+  // If in DECLINED or EXPIRED state, cannot cancel
+  if (booking.status === "DECLINED" || booking.status === "EXPIRED") {
+    throw new HttpError(
+      409,
+      `Cannot cancel booking with status ${booking.status}`,
+      "STATE_CONFLICT",
+    );
+  }
+
+  // Before confirmation, only the organizer cancels
+  if (booking.status === "PENDING_OWNER_CONFIRMATION") {
+    if (booking.organizerUserId !== actorId) {
+      throw new HttpError(
+        403,
+        "Only the organizer can cancel a pending booking request",
+        "FORBIDDEN",
+      );
+    }
+
+    const isLate = isLateCancellation(booking.startAt, now);
+
+    return withTransaction(async (tx) => {
+      const fresh = await repo.findBookingById(bookingId, tx);
+      if (!fresh) {
+        throw new HttpError(404, "Booking not found", "NOT_FOUND");
+      }
+      if (
+        fresh.status === "CANCELLED_BY_TEAM" ||
+        fresh.status === "CANCELLED_BY_OWNER"
+      ) {
+        if (fresh.cancelledByUserId === actorId) return toBookingDto(fresh);
+        throw new HttpError(409, "Booking has already been cancelled", "STATE_CONFLICT");
+      }
+      if (fresh.status !== "PENDING_OWNER_CONFIRMATION") {
+        throw new HttpError(409, `Cannot cancel booking with status ${fresh.status}`, "STATE_CONFLICT");
+      }
+
+      const updated = await repo.updateBooking(
+        bookingId,
+        {
+          status: "CANCELLED_BY_TEAM",
+          cancelledAt: now,
+          cancelledByUserId: actorId,
+          responsibleTeamId: fresh.challengerTeamId,
+          cancellationReason: input?.reason ?? null,
+          isLateCancellation: isLate,
+        },
+        tx,
+      );
+
+      const reloaded = await repo.findBookingById(bookingId, tx);
+      return toBookingDto(reloaded ?? updated);
+    });
+  }
+
+  // After confirmation and before match end
+  if (booking.status === "CONFIRMED") {
+    if (now.getTime() >= booking.endAt.getTime()) {
+      throw new HttpError(
+        409,
+        "Cannot cancel a match that has already ended",
+        "STATE_CONFLICT",
+      );
+    }
+
+    const isOwner = booking.pitch.ownerId === actorId;
+    const isChallengerCaptain =
+      booking.challengerTeam?.members?.some(
+        (m) => m.userId === actorId && m.role === "CAPTAIN" && m.status === "ACTIVE",
+      ) || booking.match?.homeCaptainId === actorId;
+    const isOpponentCaptain =
+      booking.opponentTeam?.members?.some(
+        (m) => m.userId === actorId && m.role === "CAPTAIN" && m.status === "ACTIVE",
+      ) || booking.match?.awayCaptainId === actorId;
+
+    let targetStatus: "CANCELLED_BY_OWNER" | "CANCELLED_BY_TEAM";
+    let responsibleTeamId: string | null = null;
+    let isLate = false;
+
+    if (isOwner) {
+      targetStatus = "CANCELLED_BY_OWNER";
+      responsibleTeamId = null;
+      isLate = false;
+    } else if (isChallengerCaptain || isOpponentCaptain) {
+      targetStatus = "CANCELLED_BY_TEAM";
+      responsibleTeamId = isChallengerCaptain
+        ? booking.challengerTeamId
+        : booking.opponentTeamId;
+
+      if (
+        input?.responsibleTeamId &&
+        input.responsibleTeamId !== responsibleTeamId
+      ) {
+        throw new HttpError(
+          403,
+          "Captains may only cancel for their own team",
+          "FORBIDDEN",
+        );
+      }
+
+      isLate = isLateCancellation(booking.startAt, now);
+    } else {
+      throw new HttpError(
+        403,
+        "You do not have permission to cancel this booking",
+        "FORBIDDEN",
+      );
+    }
+
+    return withTransaction(async (tx) => {
+      const fresh = await repo.findBookingById(bookingId, tx);
+      if (!fresh) {
+        throw new HttpError(404, "Booking not found", "NOT_FOUND");
+      }
+      if (
+        fresh.status === "CANCELLED_BY_TEAM" ||
+        fresh.status === "CANCELLED_BY_OWNER"
+      ) {
+        if (fresh.cancelledByUserId === actorId) return toBookingDto(fresh);
+        throw new HttpError(409, "Booking has already been cancelled", "STATE_CONFLICT");
+      }
+      if (fresh.status !== "CONFIRMED") {
+        throw new HttpError(409, `Cannot cancel booking with status ${fresh.status}`, "STATE_CONFLICT");
+      }
+      if (now.getTime() >= fresh.endAt.getTime()) {
+        throw new HttpError(409, "Cannot cancel a match that has already ended", "STATE_CONFLICT");
+      }
+
+      const updated = await repo.updateBooking(
+        bookingId,
+        {
+          status: targetStatus,
+          cancelledAt: now,
+          cancelledByUserId: actorId,
+          responsibleTeamId,
+          cancellationReason: input?.reason ?? null,
+          isLateCancellation: isLate,
+        },
+        tx,
+      );
+
+      // Cancel the match in the same transaction
+      await matchesService.cancelMatchByBookingId(bookingId, tx);
+
+      const reloaded = await repo.findBookingById(bookingId, tx);
+      return toBookingDto(reloaded ?? updated);
+    });
+  }
+
+  throw new HttpError(
+    409,
+    `Cannot cancel booking with status ${booking.status}`,
+    "STATE_CONFLICT",
+  );
+}
+
+/**
+ * Evaluates pending bookings past ownerResponseDeadline and marks them EXPIRED.
+ */
+export async function expireDueBookings(
+  now: Date = new Date(),
+  tx?: RepositoryContext,
+): Promise<{ count: number }> {
+  return repo.expireDueBookings(now, tx);
 }

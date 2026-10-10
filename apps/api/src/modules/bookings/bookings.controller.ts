@@ -1,5 +1,11 @@
 import type { Request, Response } from "express";
-import { createBookingSchema, listBookingsQuerySchema } from "@footconnect/shared";
+import {
+  cancelBookingSchema,
+  confirmBookingSchema,
+  createBookingSchema,
+  declineBookingSchema,
+  listBookingsQuerySchema,
+} from "@footconnect/shared";
 import * as service from "./bookings.service";
 
 export async function createBookingHandler(req: Request, res: Response): Promise<void> {
@@ -40,5 +46,38 @@ export async function getOwnerBookingsHandler(req: Request, res: Response): Prom
     role: "owner",
   });
   const result = await service.listBookings(query, req.userId);
+  res.json(result);
+}
+
+export async function confirmBookingHandler(req: Request, res: Response): Promise<void> {
+  const input = confirmBookingSchema.parse(req.body ?? {});
+  const result = await service.confirmBooking(
+    req.userId!,
+    req.params.id!,
+    new Date(),
+    input,
+  );
+  res.json(result);
+}
+
+export async function declineBookingHandler(req: Request, res: Response): Promise<void> {
+  const input = declineBookingSchema.parse(req.body ?? {});
+  const result = await service.declineBooking(
+    req.userId!,
+    req.params.id!,
+    new Date(),
+    input,
+  );
+  res.json(result);
+}
+
+export async function cancelBookingHandler(req: Request, res: Response): Promise<void> {
+  const input = cancelBookingSchema.parse(req.body ?? {});
+  const result = await service.cancelBooking(
+    req.userId!,
+    req.params.id!,
+    input,
+    new Date(),
+  );
   res.json(result);
 }

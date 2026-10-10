@@ -150,3 +150,14 @@ export async function getMatchById(
   const match = await repo.findMatchById(id, tx);
   return match ? toScheduledMatchSummary(match) : null;
 }
+
+/**
+ * Cancels a match by its bookingId in the provided transaction.
+ */
+export async function cancelMatchByBookingId(
+  bookingId: string,
+  tx?: RepositoryContext,
+): Promise<ScheduledMatchSummary | null> {
+  const updated = await repo.updateMatchStatusByBookingId(bookingId, "CANCELLED", tx);
+  return updated ? toScheduledMatchSummary(updated) : null;
+}

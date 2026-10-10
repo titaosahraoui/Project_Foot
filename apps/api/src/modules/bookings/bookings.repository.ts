@@ -25,6 +25,10 @@ export interface CreateBookingData {
   declinedAt?: Date | null;
   cancelledAt?: Date | null;
   expiresAt?: Date | null;
+  cancelledByUserId?: string | null;
+  responsibleTeamId?: string | null;
+  cancellationReason?: string | null;
+  isLateCancellation?: boolean;
 }
 
 export interface UpdateBookingData {
@@ -34,6 +38,10 @@ export interface UpdateBookingData {
   declinedAt?: Date | null;
   cancelledAt?: Date | null;
   expiresAt?: Date | null;
+  cancelledByUserId?: string | null;
+  responsibleTeamId?: string | null;
+  cancellationReason?: string | null;
+  isLateCancellation?: boolean;
 }
 
 export interface ListBookingsFilter {
@@ -56,6 +64,7 @@ export interface FindBlockingBookingRangesFilter {
 
 export const bookingInclude = {
   pitch: true,
+  challenge: true,
   challengerTeam: {
     include: {
       members: true,
@@ -67,6 +76,7 @@ export const bookingInclude = {
     },
   },
   organizerUser: true,
+  match: true,
 } satisfies Prisma.BookingInclude;
 
 export type BookingWithRelations = Prisma.BookingGetPayload<{
@@ -146,6 +156,10 @@ export async function createBooking(
         declinedAt: data.declinedAt ?? null,
         cancelledAt: data.cancelledAt ?? null,
         expiresAt: data.expiresAt ?? null,
+        cancelledByUserId: data.cancelledByUserId ?? null,
+        responsibleTeamId: data.responsibleTeamId ?? null,
+        cancellationReason: data.cancellationReason ?? null,
+        isLateCancellation: data.isLateCancellation ?? false,
       },
     });
   } catch (err) {
@@ -341,4 +355,21 @@ export function updateBooking(
     where: { id },
     data,
   });
+}
+
+export async function expireDueBookings(
+  now: Date = new Date(),
+  db: RepositoryContext = prisma,
+): Promise<{ count: number }> {
+  const result = await db.booking.updateMany({
+    where: {
+      status: "PENDING_OWNER_CONFIRMATION",
+      ownerResponseDeadline: { lte: now },
+    },
+    data: {
+      status: "EXPIRED",
+      expiresAt: now,
+    },
+  });
+  return { count: result.count };
 }

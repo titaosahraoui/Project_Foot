@@ -58,6 +58,7 @@ model User {
   awayCaptainMatches  Match[]          @relation("awayCaptainMatches")
   pitchOwnerMatches   Match[]          @relation("pitchOwnerMatches")
   matchParticipations MatchParticipant[]
+  cancelledBookings   Booking[]        @relation("cancelledBookings")
 
   @@map("users")
 }
@@ -76,6 +77,8 @@ model RefreshSession {
   @@index([expiresAt])
   @@map("refresh_sessions")
 }
+
+// ---- Pitches (owned by the pitches module) ----
 
 enum PitchSurface {
   NATURAL_GRASS
@@ -191,6 +194,7 @@ model Team {
   homeMatches          Match[]            @relation("homeMatches")
   awayMatches          Match[]            @relation("awayMatches")
   matchParticipants    MatchParticipant[]
+  responsibleBookings  Booking[]          @relation("responsibleBookings")
 
   @@map("teams")
 }
@@ -401,15 +405,21 @@ model Booking {
   declinedAt            DateTime?
   cancelledAt           DateTime?
   expiresAt             DateTime?
+  cancelledByUserId     String?
+  responsibleTeamId     String?
+  cancellationReason    String?
+  isLateCancellation    Boolean              @default(false)
   createdAt             DateTime             @default(now())
   updatedAt             DateTime             @updatedAt
 
-  pitch          Pitch          @relation(fields: [pitchId], references: [id], onDelete: Cascade)
-  challenge      MatchChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
-  organizerUser  User           @relation("organizedBookings", fields: [organizerUserId], references: [id], onDelete: Cascade)
-  challengerTeam Team           @relation("challengerBookings", fields: [challengerTeamId], references: [id], onDelete: Cascade)
-  opponentTeam   Team           @relation("opponentBookings", fields: [opponentTeamId], references: [id], onDelete: Cascade)
-  match          Match?
+  pitch           Pitch          @relation(fields: [pitchId], references: [id], onDelete: Cascade)
+  challenge       MatchChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  organizerUser   User           @relation("organizedBookings", fields: [organizerUserId], references: [id], onDelete: Cascade)
+  challengerTeam  Team           @relation("challengerBookings", fields: [challengerTeamId], references: [id], onDelete: Cascade)
+  opponentTeam    Team           @relation("opponentBookings", fields: [opponentTeamId], references: [id], onDelete: Cascade)
+  match           Match?
+  cancelledByUser User?          @relation("cancelledBookings", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
+  responsibleTeam Team?          @relation("responsibleBookings", fields: [responsibleTeamId], references: [id], onDelete: SetNull)
 
   @@index([pitchId, status])
   @@index([challengeId])
@@ -418,6 +428,8 @@ model Booking {
   @@index([opponentTeamId, status])
   @@index([status, ownerResponseDeadline])
   @@index([pitchId, startAt, endAt])
+  @@index([responsibleTeamId])
+  @@index([cancelledByUserId])
   @@map("bookings")
 }
 

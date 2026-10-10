@@ -13,6 +13,7 @@ export const BOOKING_MESSAGE_MAX_LENGTH = 280;
 
 export const BOOKING_OWNER_RESPONSE_MAX_HOURS = 24;
 export const BOOKING_OWNER_RESPONSE_MIN_HOURS_BEFORE_START = 2;
+export const BOOKING_LATE_CANCELLATION_HOURS = 6;
 
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -52,7 +53,7 @@ export function isBlockingBookingStatus(status: BookingStatus): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: Owner response deadline calculation
+// Helpers: Deadlines and Late Cancellation
 // ---------------------------------------------------------------------------
 
 /**
@@ -69,6 +70,20 @@ export function calculateOwnerResponseDeadline(
     startAt.getTime() - BOOKING_OWNER_RESPONSE_MIN_HOURS_BEFORE_START * HOUR_MS,
   );
   return byHours.getTime() < byStart.getTime() ? byHours : byStart;
+}
+
+/**
+ * A team cancellation within six hours of startAt is classified as late.
+ */
+export function isLateCancellation(
+  startAt: Date | string,
+  cancelledAt: Date | string = new Date(),
+): boolean {
+  const start = startAt instanceof Date ? startAt : new Date(startAt);
+  const cancelled =
+    cancelledAt instanceof Date ? cancelledAt : new Date(cancelledAt);
+  const diffMs = start.getTime() - cancelled.getTime();
+  return diffMs < BOOKING_LATE_CANCELLATION_HOURS * HOUR_MS;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +225,10 @@ export const bookingSchema = z
     declinedAt: utcDateTimeSchema.nullable(),
     cancelledAt: utcDateTimeSchema.nullable(),
     expiresAt: utcDateTimeSchema.nullable(),
+    cancelledByUserId: z.string().uuid().nullable().optional(),
+    responsibleTeamId: z.string().uuid().nullable().optional(),
+    cancellationReason: z.string().nullable().optional(),
+    isLateCancellation: z.boolean().optional(),
     createdAt: utcDateTimeSchema,
     updatedAt: utcDateTimeSchema,
   })
