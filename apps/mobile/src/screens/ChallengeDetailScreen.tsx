@@ -11,6 +11,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { MatchChallengeDetail } from "@footconnect/shared";
+import { formatPitchPrice } from "@footconnect/shared";
 import { colors, radii, spacing } from "@footconnect/ui";
 import { Avatar, Badge, Button, Card, Icon, Text } from "../components/ui";
 import { api } from "../lib/api";
@@ -57,21 +58,41 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
     queryFn: () => api.getChallenge(challengeId),
   });
 
+  // Query any existing pitch booking for this challenge
+  const {
+    data: bookingsData,
+    refetch: refetchBookings,
+    isRefetching: isRefetchingBookings,
+  } = useQuery({
+    queryKey: ["challenge-bookings", challengeId],
+    queryFn: () => api.getMyBookings({ page: 1, pageSize: 10, challengeId }),
+    enabled: !!challenge && challenge.status === "ACCEPTED",
+    refetchInterval: 10000,
+  });
+
+  const activeBooking =
+    bookingsData?.items.find(
+      (b) =>
+        b.status === "PENDING_OWNER_CONFIRMATION" ||
+        b.status === "CONFIRMED",
+    ) ?? bookingsData?.items[0];
+
   const invalidateAllChallengeQueries = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["challenge", challengeId] }),
-      queryClient.invalidateQueries({ queryKey: ["challengeInbox"] }),
-      queryClient.invalidateQueries({ queryKey: ["challengeOutbox"] }),
-      queryClient.invalidateQueries({ queryKey: ["myAvailability"] }),
+      queryClient.invalidateQueries({ queryKey: ["challenges-inbox"] }),
+      queryClient.invalidateQueries({ queryKey: ["challenges-outbox"] }),
+      queryClient.invalidateQueries({ queryKey: ["my-availabilities"] }),
       queryClient.invalidateQueries({ queryKey: ["recommendations"] }),
+      queryClient.invalidateQueries({ queryKey: ["challenge-bookings", challengeId] }),
     ]);
   };
 
-  const runGuardedAction = (
+  const runGuardedAction = async (
     action: "ACCEPT" | "DECLINE" | "CANCEL",
     task: () => Promise<void>,
-  ) =>
-    executeGuardedAction(
+  ) => {
+    await executeGuardedAction(
       action,
       {
         actionInProgress,
@@ -80,10 +101,8 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
         setActionError,
       },
       task,
-      () => {
-        void refetch();
-      },
     );
+  };
 
   const handleAccept = async () => {
     await runGuardedAction("ACCEPT", async () => {
@@ -109,7 +128,7 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
         "Decline Challenge",
         "Are you sure you want to decline this match challenge?",
         [
-          { text: "Keep Challenge", style: "cancel" },
+          { text: "Keep", style: "cancel" },
           {
             text: "Decline",
             style: "destructive",
@@ -146,6 +165,41 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
             onPress: () => {
               void executeCancel();
             },
+          },
+        ],
+      );
+    }
+  };
+
+  const handleCancelBooking = async (bookingId: string) => {
+    const doCancel = async () => {
+      try {
+        await api.cancelBooking(bookingId);
+        await Promise.all([
+          refetchBookings(),
+          refetch(),
+          queryClient.invalidateQueries({ queryKey: ["my-bookings"] }),
+        ]);
+        Alert.alert("Reservation Cancelled", "Your pitch reservation request has been cancelled.");
+      } catch (err: unknown) {
+        Alert.alert("Cancellation Failed", err instanceof Error ? err.message : String(err));
+      }
+    };
+
+    if (Platform.OS === "web") {
+      if (window.confirm("Are you sure you want to cancel this pitch reservation?")) {
+        void doCancel();
+      }
+    } else {
+      Alert.alert(
+        "Cancel Pitch Reservation",
+        "Are you sure you want to cancel this pending reservation?",
+        [
+          { text: "Keep", style: "cancel" },
+          {
+            text: "Cancel Reservation",
+            style: "destructive",
+            onPress: () => void doCancel(),
           },
         ],
       );
@@ -250,8 +304,11 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
       contentContainerStyle={styles.scrollContent}
       refreshControl={
         <RefreshControl
-          refreshing={isRefetching}
-          onRefresh={refetch}
+          refreshing={isRefetching || isRefetchingBookings}
+          onRefresh={() => {
+            void refetch();
+            void refetchBookings();
+          }}
           tintColor={colors.primaryContainer}
         />
       }
@@ -447,6 +504,93 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
         </Card>
       ) : null}
 
+      {/* Pitch Reservation Tracking Section */}
+      {activeBooking ? (
+        <Card style={styles.bookingStatusCard}>
+          <View style={styles.bookingStatusHeader}>
+            <View style={{ flex: 1 }}>
+              <Text variant="overline" color={colors.primaryContainer}>
+                PITCH RESERVATION STATUS
+              </Text>
+              <Text variant="titleS" color={colors.primary} style={{ marginTop: 2 }}>
+                {activeBooking.pitch?.name ?? "Pitch Reservation"}
+              </Text>
+            </View>
+            <Badge
+              label={activeBooking.status.replace(/_/g, " ")}
+              tone={
+                activeBooking.status === "CONFIRMED"
+                  ? "win"
+                  : activeBooking.status === "PENDING_OWNER_CONFIRMATION"
+                    ? "brand"
+                    : "loss"
+              }
+            />
+          </View>
+
+          <View style={styles.bookingDetailRow}>
+            <Icon name="clock" size={16} color={colors.primaryContainer} />
+            <View style={{ flex: 1 }}>
+              <Text variant="labelSm" color={colors.onSurfaceVariant}>
+                SLOT TIME
+              </Text>
+              <Text variant="bodySm" color={colors.primary}>
+                {formatAlgiersTimeRange(activeBooking.startAt, activeBooking.endAt)}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.bookingDetailRow}>
+            <Icon name="award" size={16} color={colors.primaryContainer} />
+            <View style={{ flex: 1 }}>
+              <Text variant="labelSm" color={colors.onSurfaceVariant}>
+                SNAPSHOT PRICE
+              </Text>
+              <Text variant="titleS" color={colors.primaryContainer}>
+                {formatPitchPrice({
+                  amountMinor: activeBooking.priceAmountMinor,
+                  currency: activeBooking.currency,
+                })}
+              </Text>
+            </View>
+          </View>
+
+          {activeBooking.status === "PENDING_OWNER_CONFIRMATION" ? (
+            <View style={styles.pendingNoteBox}>
+              <Icon name="clock" size={14} color={colors.primaryContainer} />
+              <Text variant="caption" color={colors.onSurfaceVariant} style={{ flex: 1 }}>
+                Awaiting owner confirmation. Response due by{" "}
+                {formatAlgiersDateTime(activeBooking.ownerResponseDeadline)}.
+              </Text>
+            </View>
+          ) : activeBooking.status === "CONFIRMED" ? (
+            <View style={styles.confirmedNoteBox}>
+              <Icon name="check" size={16} color={colors.win} />
+              <Text variant="caption" color={colors.win} style={{ flex: 1, fontWeight: "600" }}>
+                Pitch reserved and match scheduled! Payment settled offline at the venue.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.declinedNoteBox}>
+              <Icon name="alert-triangle" size={16} color={colors.loss} />
+              <Text variant="caption" color={colors.loss} style={{ flex: 1 }}>
+                Previous reservation was {activeBooking.status.toLowerCase().replace(/_/g, " ")}. You can select another pitch slot before the booking deadline.
+              </Text>
+            </View>
+          )}
+
+          {isOrganizer && activeBooking.status === "PENDING_OWNER_CONFIRMATION" ? (
+            <Button
+              label="Cancel Reservation"
+              size="sm"
+              variant="danger"
+              onPress={() => handleCancelBooking(activeBooking.id)}
+              style={{ marginTop: 8 }}
+            />
+          ) : null}
+        </Card>
+      ) : null}
+
       {/* Error / Offline Retry Callout */}
       {actionError ? (
         <Card style={styles.actionErrorCard}>
@@ -476,13 +620,25 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
         </Card>
       ) : null}
 
-      {/* Milestone 08 "Choose a pitch" button — only shown to organizer after acceptance */}
-      {isAccepted && isOrganizer ? (
+      {/* "Choose a pitch" button — active for organizer after acceptance when no blocking reservation */}
+      {isAccepted &&
+      isOrganizer &&
+      (!activeBooking ||
+        activeBooking.status === "DECLINED" ||
+        activeBooking.status === "EXPIRED" ||
+        activeBooking.status === "CANCELLED_BY_OWNER" ||
+        activeBooking.status === "CANCELLED_BY_TEAM") ? (
         <View style={styles.pitchSection}>
           <Button
             label="Choose a pitch"
-            disabled={true}
+            disabled={false}
             variant="primary"
+            onPress={() =>
+              navigation.navigate("ChoosePitch", {
+                challengeId: challenge.id,
+                challenge,
+              })
+            }
             icon={<Icon name="map-pin" size={16} color={colors.onPrimary} />}
           />
           <Text
@@ -490,7 +646,7 @@ export function ChallengeDetailScreen({ route, navigation }: Props) {
             color={colors.onSurfaceVariant}
             style={styles.pitchNote}
           >
-            Pitch reservation will be unlocked in Milestone 08
+            Find and book an available pitch matching the accepted conditions
           </Text>
         </View>
       ) : null}
@@ -620,7 +776,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceContainer,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.08)",
-    paddingVertical: spacing.lg,
   },
   teamsRow: {
     flexDirection: "row",
@@ -630,26 +785,28 @@ const styles = StyleSheet.create({
   teamCol: {
     flex: 1,
     alignItems: "center",
-    gap: 6,
+    gap: spacing.xs,
   },
   teamName: {
     textAlign: "center",
+    fontFamily: fontFamily.headline,
   },
   vsBox: {
-    paddingHorizontal: spacing.sm,
     alignItems: "center",
-    gap: 4,
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
   },
   vsText: {
-    fontFamily: fontFamily.display,
-    fontSize: 22,
     color: colors.primaryContainer,
+    fontSize: 16,
+    fontFamily: fontFamily.display,
+    letterSpacing: 2,
   },
   conditionsCard: {
-    gap: spacing.md,
     backgroundColor: colors.surfaceContainer,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.08)",
+    gap: spacing.sm,
   },
   conditionItem: {
     flexDirection: "row",
@@ -657,10 +814,10 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   deadlinesCard: {
-    gap: spacing.sm,
     backgroundColor: colors.surfaceContainer,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.08)",
+    gap: spacing.xs,
   },
   deadlineRow: {
     flexDirection: "row",
@@ -668,36 +825,77 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   messageCard: {
-    gap: spacing.xs,
     backgroundColor: colors.surfaceContainer,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.primaryContainer,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    gap: spacing.xs,
+  },
+  bookingStatusCard: {
+    backgroundColor: colors.surfaceContainer,
+    borderWidth: 1,
+    borderColor: "rgba(195, 244, 0, 0.3)",
+    gap: spacing.sm,
+  },
+  bookingStatusHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.08)",
+    paddingBottom: spacing.xs,
+  },
+  bookingDetailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  pendingNoteBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(195, 244, 0, 0.08)",
+    padding: spacing.sm,
+    borderRadius: radii.sm,
+    gap: spacing.xs,
+  },
+  confirmedNoteBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(0, 253, 147, 0.1)",
+    padding: spacing.sm,
+    borderRadius: radii.sm,
+    gap: spacing.xs,
+  },
+  declinedNoteBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 84, 73, 0.12)",
+    padding: spacing.sm,
+    borderRadius: radii.sm,
+    gap: spacing.xs,
   },
   actionErrorCard: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "rgba(255, 84, 73, 0.1)",
+    borderColor: colors.danger,
+    borderWidth: 1,
     gap: spacing.sm,
-    backgroundColor: colors.surfaceContainerHigh,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.danger,
-    padding: spacing.md,
+    padding: spacing.sm,
   },
   pitchSection: {
     gap: spacing.xs,
-    marginTop: spacing.sm,
   },
   pitchNote: {
     textAlign: "center",
   },
   actionsContainer: {
     gap: spacing.sm,
-    marginTop: spacing.sm,
   },
   readOnlyNoteWrap: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
-    paddingVertical: spacing.md,
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
   },
 });

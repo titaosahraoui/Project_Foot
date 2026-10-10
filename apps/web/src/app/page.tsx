@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { HealthStatus } from "@footconnect/shared";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { PendingBookingsQueue } from "@/components/bookings/PendingBookingsQueue";
 
 function ApiStatus() {
   const { data, isLoading, isError } = useQuery<HealthStatus>({
@@ -60,18 +61,18 @@ export default function Home() {
             <span>MY PITCHES</span>
           </Link>
           <a
+            href="#bookings"
+            className="flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-[#c4c9ac] hover:text-white hover:bg-[#1d201e] font-headline text-sm font-semibold tracking-wide transition-all"
+          >
+            <span>📋</span>
+            <span>RESERVATIONS</span>
+          </a>
+          <a
             href="#schedule"
             className="flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-[#c4c9ac] hover:text-white hover:bg-[#1d201e] font-headline text-sm font-semibold tracking-wide transition-all"
           >
             <span>📅</span>
             <span>TODAY&apos;S SLOTS</span>
-          </a>
-          <a
-            href="#analytics"
-            className="flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-[#c4c9ac] hover:text-white hover:bg-[#1d201e] font-headline text-sm font-semibold tracking-wide transition-all"
-          >
-            <span>📊</span>
-            <span>ANALYTICS</span>
           </a>
           <Link
             href="/profile"
@@ -175,6 +176,11 @@ export default function Home() {
               <div className="font-mono text-3xl font-bold text-white mt-2">48,000 <span className="text-sm font-sans text-[#8e9379]">DZD</span></div>
               <div className="text-xs text-[#00fd93] mt-1">+18% vs last week</div>
             </div>
+          </div>
+
+          {/* Pending Bookings Queue */}
+          <div id="bookings">
+            <PendingBookingsQueue />
           </div>
         </div>
       </main>
