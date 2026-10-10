@@ -125,7 +125,7 @@ describe("ApiClient - Bookings methods", () => {
     });
 
     const client = createApiClient({ baseUrl: "https://api.test" });
-    await client.confirmBooking("b-123", "conf-key", { reason: "Confirmed" });
+    await client.confirmBooking("b-123", "conf-key");
 
     expect(capturedUrl).toBe("https://api.test/api/v1/bookings/b-123/confirm");
     expect(capturedInit?.method).toBe("POST");
@@ -175,5 +175,77 @@ describe("ApiClient - Bookings methods", () => {
     expect(capturedInit?.method).toBe("POST");
     const headers = capturedInit?.headers as Headers;
     expect(headers.get("Idempotency-Key")).toBe("cancel-key");
+  });
+});
+
+describe("ApiClient - Matches methods", () => {
+  it("getMyMatches sends GET with query parameters", async () => {
+    let capturedUrl = "";
+
+    global.fetch = vi.fn().mockImplementation(async (url) => {
+      capturedUrl = String(url);
+      return {
+        ok: true,
+        text: async () => JSON.stringify({ items: [], page: 1, pageSize: 10, total: 0 }),
+      } as Response;
+    });
+
+    const client = createApiClient({ baseUrl: "https://api.test" });
+    await client.getMyMatches({ state: "upcoming", page: 1, pageSize: 10 });
+
+    expect(capturedUrl).toBe("https://api.test/api/v1/matches/mine?page=1&pageSize=10&state=upcoming");
+  });
+
+  it("getOwnerMatches sends GET with query parameters including pitchId", async () => {
+    let capturedUrl = "";
+
+    global.fetch = vi.fn().mockImplementation(async (url) => {
+      capturedUrl = String(url);
+      return {
+        ok: true,
+        text: async () => JSON.stringify({ items: [], page: 1, pageSize: 5, total: 0 }),
+      } as Response;
+    });
+
+    const client = createApiClient({ baseUrl: "https://api.test" });
+    await client.getOwnerMatches({ state: "past", pitchId: "p-456", page: 2, pageSize: 5 });
+
+    expect(capturedUrl).toBe("https://api.test/api/v1/matches/owner?page=2&pageSize=5&state=past&pitchId=p-456");
+  });
+
+  it("getMatch sends GET with match id", async () => {
+    let capturedUrl = "";
+
+    global.fetch = vi.fn().mockImplementation(async (url) => {
+      capturedUrl = String(url);
+      return {
+        ok: true,
+        text: async () => JSON.stringify({ id: "m-123" }),
+      } as Response;
+    });
+
+    const client = createApiClient({ baseUrl: "https://api.test" });
+    const res = await client.getMatch("m-123");
+
+    expect(capturedUrl).toBe("https://api.test/api/v1/matches/m-123");
+    expect(res.id).toBe("m-123");
+  });
+
+  it("getMatchByBooking sends GET with booking id", async () => {
+    let capturedUrl = "";
+
+    global.fetch = vi.fn().mockImplementation(async (url) => {
+      capturedUrl = String(url);
+      return {
+        ok: true,
+        text: async () => JSON.stringify({ id: "m-123", bookingId: "b-789" }),
+      } as Response;
+    });
+
+    const client = createApiClient({ baseUrl: "https://api.test" });
+    const res = await client.getMatchByBooking("b-789");
+
+    expect(capturedUrl).toBe("https://api.test/api/v1/matches/by-booking/b-789");
+    expect(res.id).toBe("m-123");
   });
 });

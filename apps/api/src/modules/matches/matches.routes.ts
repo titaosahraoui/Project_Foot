@@ -6,6 +6,18 @@ import * as c from "./matches.controller";
 export const matchesRouter: Router = Router();
 
 matchesRouter.get(
+  "/mine",
+  requireAuth,
+  asyncHandler(c.getMyMatchesHandler),
+);
+
+matchesRouter.get(
+  "/owner",
+  requireAuth,
+  asyncHandler(c.getOwnerMatchesHandler),
+);
+
+matchesRouter.get(
   "/by-booking/:bookingId",
   requireAuth,
   asyncHandler(c.getMatchByBookingHandler),

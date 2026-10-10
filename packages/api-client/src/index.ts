@@ -18,11 +18,14 @@ import type {
   HealthStatus,
   Invitation,
   ListBookingsQuery,
+  ListMatchesQuery,
   LoginInput,
   MatchChallengeDetail,
   MatchChallengesQuery,
+  MatchDetail,
   PaginatedBookings,
   PaginatedMatchChallenges,
+  PaginatedMatches,
   PaginatedRecommendations,
   PaginationQuery,
   Pitch,
@@ -31,6 +34,7 @@ import type {
   PitchDetail,
   PitchQuery,
   RegisterInput,
+  ScheduledMatchSummary,
   SetPitchAvailabilityRulesInput,
   SetTeamLineupInput,
   TeamAvailability,
@@ -196,6 +200,12 @@ export interface ApiClient {
   listBookings(
     query?: ListBookingsQuery,
   ): Promise<PaginatedBookings>;
+
+  // Matches (Milestone 09)
+  getMyMatches(query?: ListMatchesQuery): Promise<PaginatedMatches>;
+  getOwnerMatches(query?: ListMatchesQuery): Promise<PaginatedMatches>;
+  getMatch(id: string): Promise<MatchDetail>;
+  getMatchByBooking(bookingId: string): Promise<ScheduledMatchSummary | MatchDetail>;
 }
 
 
@@ -507,5 +517,28 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       const qs = params.toString();
       return request<PaginatedBookings>(`/api/v1/bookings${qs ? `?${qs}` : ""}`);
     },
+    // Matches (Milestone 09)
+    getMyMatches: (query) => {
+      const params = new URLSearchParams();
+      if (query?.page !== undefined) params.set("page", String(query.page));
+      if (query?.pageSize !== undefined) params.set("pageSize", String(query.pageSize));
+      if (query?.limit !== undefined) params.set("limit", String(query.limit));
+      if (query?.state) params.set("state", query.state);
+      const qs = params.toString();
+      return request<PaginatedMatches>(`/api/v1/matches/mine${qs ? `?${qs}` : ""}`);
+    },
+    getOwnerMatches: (query) => {
+      const params = new URLSearchParams();
+      if (query?.page !== undefined) params.set("page", String(query.page));
+      if (query?.pageSize !== undefined) params.set("pageSize", String(query.pageSize));
+      if (query?.limit !== undefined) params.set("limit", String(query.limit));
+      if (query?.state) params.set("state", query.state);
+      if (query?.pitchId) params.set("pitchId", query.pitchId);
+      const qs = params.toString();
+      return request<PaginatedMatches>(`/api/v1/matches/owner${qs ? `?${qs}` : ""}`);
+    },
+    getMatch: (id) => request<MatchDetail>(`/api/v1/matches/${id}`),
+    getMatchByBooking: (bookingId) =>
+      request<ScheduledMatchSummary | MatchDetail>(`/api/v1/matches/by-booking/${bookingId}`),
   };
 }
