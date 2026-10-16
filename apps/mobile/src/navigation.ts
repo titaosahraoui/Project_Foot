@@ -1,5 +1,5 @@
 import type { NavigatorScreenParams } from "@react-navigation/native";
-import type { TeamAvailability } from "@footconnect/shared";
+import type { MatchChallengeDetail, TeamAvailability } from "@footconnect/shared";
 
 export type AuthStackParamList = {
   Login: undefined;
@@ -37,6 +37,10 @@ export type PlayStackParamList = {
   ChallengeInbox: { teamId?: string } | undefined;
   ChallengeOutbox: { teamId?: string } | undefined;
   ChallengeDetail: { challengeId: string };
+  ChoosePitch: {
+    challengeId: string;
+    challenge?: MatchChallengeDetail;
+  };
   TeamDetail: { teamId: string };
 };
 

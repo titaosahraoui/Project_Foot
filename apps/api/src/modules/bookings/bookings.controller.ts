@@ -1,0 +1,100 @@
+import type { Request, Response } from "express";
+import {
+  cancelBookingSchema,
+  confirmBookingSchema,
+  createBookingSchema,
+  declineBookingSchema,
+  listBookingsQuerySchema,
+} from "@footconnect/shared";
+import { HttpError } from "../../middleware/error-handler";
+import * as service from "./bookings.service";
+
+export async function createBookingHandler(req: Request, res: Response): Promise<void> {
+  const idempotencyKey =
+    req.header("idempotency-key") || req.header("Idempotency-Key");
+  if (!idempotencyKey || typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
+    throw new HttpError(400, "Idempotency-Key header is required", "VALIDATION_ERROR");
+  }
+
+  const input = createBookingSchema.parse(req.body);
+  const result = await service.createBooking(
+    req.userId!,
+    input,
+    idempotencyKey.trim(),
+  );
+  res.status(201).json(result);
+}
+
+export async function getBookingHandler(req: Request, res: Response): Promise<void> {
+  const booking = await service.getBookingById(req.params.id!, req.userId);
+  res.json(booking);
+}
+
+export async function listBookingsHandler(req: Request, res: Response): Promise<void> {
+  const query = listBookingsQuerySchema.parse(req.query);
+  const result = await service.listBookings(query, req.userId);
+  res.json(result);
+}
+
+export async function getMyBookingsHandler(req: Request, res: Response): Promise<void> {
+  const query = listBookingsQuerySchema.parse({
+    ...req.query,
+    role: "organizer",
+  });
+  const result = await service.listBookings(query, req.userId);
+  res.json(result);
+}
+
+export async function getOwnerBookingsHandler(req: Request, res: Response): Promise<void> {
+  const query = listBookingsQuerySchema.parse({
+    ...req.query,
+    role: "owner",
+  });
+  const result = await service.listBookings(query, req.userId);
+  res.json(result);
+}
+
+export async function confirmBookingHandler(req: Request, res: Response): Promise<void> {
+  const idempotencyKey =
+    req.header("idempotency-key") || req.header("Idempotency-Key");
+  if (!idempotencyKey || typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
+    throw new HttpError(400, "Idempotency-Key header is required", "VALIDATION_ERROR");
+  }
+
+  const input = confirmBookingSchema.parse(req.body ?? {});
+  const result = await service.confirmBooking(
+    req.userId!,
+    req.params.id!,
+    new Date(),
+    input,
+  );
+  res.json(result);
+}
+
+export async function declineBookingHandler(req: Request, res: Response): Promise<void> {
+  const idempotencyKey =
+    req.header("idempotency-key") || req.header("Idempotency-Key");
+  if (!idempotencyKey || typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
+    throw new HttpError(400, "Idempotency-Key header is required", "VALIDATION_ERROR");
+  }
+
+  const input = declineBookingSchema.parse(req.body ?? {});
+  const result = await service.declineBooking(
+    req.userId!,
+    req.params.id!,
+    new Date(),
+    input,
+  );
+  res.json(result);
+}
+
+export async function cancelBookingHandler(req: Request, res: Response): Promise<void> {
+  const input = cancelBookingSchema.parse(req.body ?? {});
+  const result = await service.cancelBooking(
+    req.userId!,
+    req.params.id!,
+    input,
+    new Date(),
+  );
+  res.json(result);
+}

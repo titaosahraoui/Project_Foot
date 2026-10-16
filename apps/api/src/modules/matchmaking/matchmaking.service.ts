@@ -1722,3 +1722,27 @@ export async function listOutboxChallenges(
 
   return { items, page, pageSize, total };
 }
+
+/**
+ * Loads a challenge by id directly from persistence.
+ */
+export async function getChallengeById(
+  challengeId: string,
+  tx?: RepositoryContext,
+): Promise<MatchChallengeRecord | null> {
+  return repo.findChallengeById(challengeId, tx);
+}
+
+/**
+ * Loads and locks a challenge by id within a transaction for booking validation,
+ * sharing locks with competing updates (such as cancelChallenge).
+ */
+export async function getChallengeForBooking(
+  challengeId: string,
+  tx?: RepositoryContext,
+): Promise<MatchChallengeRecord | null> {
+  if (tx) {
+    return repo.lockChallengeById(challengeId, tx);
+  }
+  return repo.findChallengeById(challengeId, tx);
+}

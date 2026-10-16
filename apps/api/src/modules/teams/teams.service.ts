@@ -11,7 +11,7 @@ import type {
   UpdateTeamInput,
 } from "@footconnect/shared";
 import { HttpError } from "../../middleware/error-handler";
-import { withTransaction } from "../../lib/transaction";
+import { withTransaction, type RepositoryContext } from "../../lib/transaction";
 import * as ratingsService from "../ratings/ratings.service";
 import { validateLineup } from "./lineup-rules";
 import * as matchesAdapter from "./matches.adapter";
@@ -84,8 +84,9 @@ export async function assertActiveCaptain(
   teamId: string,
   userId: string,
   allowArchived = false,
+  tx?: RepositoryContext,
 ): Promise<TeamWithMembers> {
-  const team = await repo.findTeamById(teamId);
+  const team = await repo.findTeamById(teamId, tx);
   if (!team) {
     throw new HttpError(404, "Team not found");
   }
@@ -97,6 +98,34 @@ export async function assertActiveCaptain(
     throw new HttpError(403, "Only the team captain can do that");
   }
   return team;
+}
+
+export async function isTeamCaptain(
+  teamId: string,
+  userId: string,
+  tx?: RepositoryContext,
+): Promise<boolean> {
+  const membership = await repo.findMembership(teamId, userId, tx);
+  return Boolean(
+    membership && membership.role === "CAPTAIN" && membership.status === "ACTIVE",
+  );
+}
+
+export async function getActiveCaptainId(
+  teamId: string,
+  tx?: RepositoryContext,
+): Promise<string> {
+  const team = await repo.findTeamById(teamId, tx);
+  if (!team) {
+    throw new HttpError(404, "Team not found", "NOT_FOUND");
+  }
+  const captain = team.members.find(
+    (m) => m.role === "CAPTAIN" && m.status === "ACTIVE",
+  );
+  if (!captain) {
+    throw new HttpError(404, "Active captain not found for team", "NOT_FOUND");
+  }
+  return captain.userId;
 }
 
 export async function createTeam(userId: string, input: CreateTeamInput): Promise<TeamDetail> {
@@ -305,4 +334,30 @@ export async function removeMember(
   }
 
   await repo.setMembershipLeft(teamId, targetUserId);
+}
+
+/**
+ * Validates a match lineup against active team membership and format rules,
+ * returning a map of active member player cards for snapshotting.
+ */
+export async function validateMatchLineup(
+  teamId: string,
+  format: FormatCode,
+  input: {
+    formationCode: string;
+    slots: Array<{ userId: string; positionCode: string; sortOrder: number }>;
+  },
+): Promise<Map<string, PlayerCard>> {
+  const team = await repo.findTeamById(teamId);
+  if (!team) {
+    throw new HttpError(404, "Team not found", "NOT_FOUND");
+  }
+  const activeMemberMap = new Map<string, PlayerCard>();
+  const activeMemberIds = new Set<string>();
+  for (const m of team.members) {
+    activeMemberIds.add(m.userId);
+    activeMemberMap.set(m.userId, toPlayerCard(m));
+  }
+  validateLineup(format, input as any, activeMemberIds);
+  return activeMemberMap;
 }

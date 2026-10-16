@@ -21,6 +21,7 @@ describe("challenge transitions (integration)", () => {
   let opponentCaptainId = "";
   let thirdCaptainId = "";
   let nonCaptainUserId = "";
+  let unrelatedUserId = "";
 
   let challengerTeamId = "";
   let opponentTeamId = "";
@@ -33,7 +34,7 @@ describe("challenge transitions (integration)", () => {
 
   beforeAll(async () => {
     // 1. Create users
-    const [cCap, oCap, tCap, nonCap] = await Promise.all([
+    const [cCap, oCap, tCap, nonCap, unrelated] = await Promise.all([
       prisma.user.create({
         data: {
           email: uniqueEmail(`cCap_${runId}`),
@@ -62,11 +63,19 @@ describe("challenge transitions (integration)", () => {
           displayName: "Non Captain",
         },
       }),
+      prisma.user.create({
+        data: {
+          email: uniqueEmail(`unrelated_${runId}`),
+          passwordHash: password,
+          displayName: "Unrelated User",
+        },
+      }),
     ]);
     challengerCaptainId = cCap.id;
     opponentCaptainId = oCap.id;
     thirdCaptainId = tCap.id;
     nonCaptainUserId = nonCap.id;
+    unrelatedUserId = unrelated.id;
 
     // 2. Create teams
     const [cTeam, oTeam, tTeam] = await Promise.all([
@@ -154,7 +163,7 @@ describe("challenge transitions (integration)", () => {
     });
     await prisma.user.deleteMany({
       where: {
-        id: { in: [challengerCaptainId, opponentCaptainId, thirdCaptainId, nonCaptainUserId] },
+        id: { in: [challengerCaptainId, opponentCaptainId, thirdCaptainId, nonCaptainUserId, unrelatedUserId] },
       },
     });
   });
@@ -199,12 +208,12 @@ describe("challenge transitions (integration)", () => {
         opponentAvailabilityId: oAvailId,
         organizerUserId: orgUserId,
         format: "FIVE_A_SIDE",
-        startAt: matchStart,
-        endAt: matchEnd,
+        startAt: overrides.startAt ?? matchStart,
+        endAt: overrides.endAt ?? matchEnd,
         originLat: 36.7538,
         originLng: 3.0588,
         radiusKm: 10,
-        responseDeadline,
+        responseDeadline: overrides.responseDeadline ?? responseDeadline,
         bookingDeadline: overrides.bookingDeadline ?? null,
         status,
         message: "Match proposal",
@@ -215,110 +224,89 @@ describe("challenge transitions (integration)", () => {
     });
   }
 
-  describe("acceptChallenge", () => {
-    it("atomically sets challenge to ACCEPTED, availability rows to MATCHED, computes bookingDeadline, and expires competing pending challenges", async () => {
+  describe("concurrent challenge races and mutual exclusion", () => {
+    it("concurrently accepts two challenges sharing one availability and proves exactly one succeeds while the other fails with 409", async () => {
       const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId);
-      const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId);
-      const tAvail = await createTestAvailability(thirdTeamId, thirdCaptainId);
+      const oAvail1 = await createTestAvailability(opponentTeamId, opponentCaptainId);
+      const oAvail2 = await createTestAvailability(thirdTeamId, thirdCaptainId);
 
-      // Primary challenge between Challenger and Opponent
-      const mainChallenge = await createTestChallenge(
+      // Two challenges competing for cAvail
+      const challenge1 = await createTestChallenge(
         challengerTeamId,
         opponentTeamId,
         cAvail.id,
-        oAvail.id,
+        oAvail1.id,
         challengerCaptainId,
       );
 
-      // Competing challenge 1: references challenger availability (Third challenged Challenger)
-      const competing1 = await createTestChallenge(
-        thirdTeamId,
+      const challenge2 = await createTestChallenge(
         challengerTeamId,
-        tAvail.id,
+        thirdTeamId,
         cAvail.id,
-        thirdCaptainId,
-      );
-
-      // Competing challenge 2: references opponent availability (Opponent challenged Third)
-      const competing2 = await createTestChallenge(
-        opponentTeamId,
-        thirdTeamId,
-        oAvail.id,
-        tAvail.id,
-        opponentCaptainId,
-      );
-
-      // Unrelated challenge between two other availability windows (non-overlapping time slot)
-      const unrelatedStart = new Date(matchStart.getTime() + 48 * 3600 * 1000);
-      const unrelatedEnd = new Date(matchEnd.getTime() + 48 * 3600 * 1000);
-      const unrelatedC = await createTestAvailability(
-        thirdTeamId,
-        thirdCaptainId,
-        unrelatedStart,
-        unrelatedEnd,
-      );
-      const unrelatedO = await createTestAvailability(
-        challengerTeamId,
+        oAvail2.id,
         challengerCaptainId,
-        unrelatedStart,
-        unrelatedEnd,
-      );
-      const unrelatedChallenge = await createTestChallenge(
-        thirdTeamId,
-        challengerTeamId,
-        unrelatedC.id,
-        unrelatedO.id,
-        thirdCaptainId,
-        "PENDING",
-        {
-          startAt: unrelatedStart,
-          endAt: unrelatedEnd,
-          responseDeadline: calculateChallengeResponseDeadline(baseNow, unrelatedStart),
-        },
       );
 
       const acceptTime = new Date("2026-10-10T12:00:00.000Z");
-      const accepted = await acceptChallenge(opponentCaptainId, mainChallenge.id, acceptTime);
 
-      expect(accepted.status).toBe("ACCEPTED");
-      expect(accepted.respondedAt).toBe(acceptTime.toISOString());
-      const expectedBookingDeadline = calculateChallengeBookingDeadline(acceptTime, matchStart);
-      expect(accepted.bookingDeadline).toBe(expectedBookingDeadline.toISOString());
+      // Concurrent execution of acceptChallenge on competing challenges sharing cAvail
+      const results = await Promise.allSettled([
+        acceptChallenge(opponentCaptainId, challenge1.id, acceptTime),
+        acceptChallenge(thirdCaptainId, challenge2.id, acceptTime),
+      ]);
 
-      // Verify availability rows are MATCHED
-      const [updatedCAvail, updatedOAvail, updatedTAvail] = await Promise.all([
+      const fulfilled = results.filter(
+        (r): r is PromiseFulfilledResult<any> => r.status === "fulfilled",
+      );
+      const rejected = results.filter(
+        (r): r is PromiseRejectedResult => r.status === "rejected",
+      );
+
+      // EXACTLY ONE SUCCEEDS, EXACTLY ONE FAILS
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+
+      const winning = fulfilled[0];
+      const losing = rejected[0];
+      expect(winning).toBeDefined();
+      expect(losing).toBeDefined();
+      if (!winning || !losing) {
+        throw new Error("Expected one winning and one losing result");
+      }
+
+      expect(winning.value.status).toBe("ACCEPTED");
+      expect(losing.reason).toBeDefined();
+      expect(losing.reason.status).toBe(409);
+
+      // Verify DB state
+      const [dbChall1, dbChall2, dbCAvail, dbOAvail1, dbOAvail2] = await Promise.all([
+        prisma.matchChallenge.findUnique({ where: { id: challenge1.id } }),
+        prisma.matchChallenge.findUnique({ where: { id: challenge2.id } }),
         prisma.teamAvailability.findUnique({ where: { id: cAvail.id } }),
-        prisma.teamAvailability.findUnique({ where: { id: oAvail.id } }),
-        prisma.teamAvailability.findUnique({ where: { id: tAvail.id } }),
+        prisma.teamAvailability.findUnique({ where: { id: oAvail1.id } }),
+        prisma.teamAvailability.findUnique({ where: { id: oAvail2.id } }),
       ]);
-      expect(updatedCAvail?.status).toBe("MATCHED");
-      expect(updatedCAvail?.matchedAt?.toISOString()).toBe(acceptTime.toISOString());
-      expect(updatedOAvail?.status).toBe("MATCHED");
-      expect(updatedOAvail?.matchedAt?.toISOString()).toBe(acceptTime.toISOString());
-      // Unrelated availability row is untouched
-      expect(updatedTAvail?.status).toBe("OPEN");
 
-      // Verify competing challenges are atomically EXPIRED
-      const [comp1Db, comp2Db, unrelatedDb] = await Promise.all([
-        prisma.matchChallenge.findUnique({ where: { id: competing1.id } }),
-        prisma.matchChallenge.findUnique({ where: { id: competing2.id } }),
-        prisma.matchChallenge.findUnique({ where: { id: unrelatedChallenge.id } }),
-      ]);
-      expect(comp1Db?.status).toBe("EXPIRED");
-      expect(comp2Db?.status).toBe("EXPIRED");
-      // Unrelated challenge is untouched
-      expect(unrelatedDb?.status).toBe("PENDING");
+      // Shared availability is MATCHED (never corrupted or duplicated)
+      expect(dbCAvail?.status).toBe("MATCHED");
+
+      if (winning.value.id === challenge1.id) {
+        expect(dbChall1?.status).toBe("ACCEPTED");
+        expect(dbOAvail1?.status).toBe("MATCHED");
+        // Competing challenge was atomically expired, losing availability remains OPEN (rollback)
+        expect(dbChall2?.status).toBe("EXPIRED");
+        expect(dbOAvail2?.status).toBe("OPEN");
+      } else {
+        expect(dbChall2?.status).toBe("ACCEPTED");
+        expect(dbOAvail2?.status).toBe("MATCHED");
+        expect(dbChall1?.status).toBe("EXPIRED");
+        expect(dbOAvail1?.status).toBe("OPEN");
+      }
     });
 
-    it("returns 409 and leaves all rows unchanged if either availability was already matched", async () => {
+    it("rolls back availability mutations if challenge acceptance fails", async () => {
       const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId);
       const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId);
-
-      // Pre-match the challenger availability (e.g. by another accepted challenge)
-      await prisma.teamAvailability.update({
-        where: { id: cAvail.id },
-        data: { status: "MATCHED", matchedAt: new Date() },
-      });
 
       const challenge = await createTestChallenge(
         challengerTeamId,
@@ -328,24 +316,150 @@ describe("challenge transitions (integration)", () => {
         challengerCaptainId,
       );
 
+      // Pre-cancel opponent availability to trigger transaction failure during accept
+      await prisma.teamAvailability.update({
+        where: { id: oAvail.id },
+        data: { status: "CANCELLED" },
+      });
+
       await expect(
         acceptChallenge(opponentCaptainId, challenge.id, baseNow),
-      ).rejects.toThrow(
-        expect.objectContaining({
-          status: 409,
-        }),
-      );
+      ).rejects.toThrow(expect.objectContaining({ status: 409 }));
 
-      // Verify challenge remains PENDING
+      // Verify challenger availability was NOT marked MATCHED (clean rollback to OPEN)
+      const dbCAvail = await prisma.teamAvailability.findUnique({ where: { id: cAvail.id } });
+      expect(dbCAvail?.status).toBe("OPEN");
+      expect(dbCAvail?.matchedAt).toBeNull();
+
+      // Verify challenge remained PENDING
       const dbChallenge = await prisma.matchChallenge.findUnique({ where: { id: challenge.id } });
       expect(dbChallenge?.status).toBe("PENDING");
+    });
+  });
 
-      // Verify opponent availability was left unchanged as OPEN
-      const dbOAvail = await prisma.teamAvailability.findUnique({ where: { id: oAvail.id } });
-      expect(dbOAvail?.status).toBe("OPEN");
+  describe("response deadline boundaries", () => {
+    it("accepts challenge 1s before responseDeadline, but rejects at or after responseDeadline", async () => {
+      const boundaryDeadline = new Date("2026-10-10T15:00:00.000Z");
+
+      // 1. Success 1 second before deadline
+      const cAvail1 = await createTestAvailability(challengerTeamId, challengerCaptainId);
+      const oAvail1 = await createTestAvailability(opponentTeamId, opponentCaptainId);
+      const challenge1 = await createTestChallenge(
+        challengerTeamId,
+        opponentTeamId,
+        cAvail1.id,
+        oAvail1.id,
+        challengerCaptainId,
+        "PENDING",
+        { responseDeadline: boundaryDeadline },
+      );
+
+      const oneSecBefore = new Date(boundaryDeadline.getTime() - 1000);
+      const accepted = await acceptChallenge(opponentCaptainId, challenge1.id, oneSecBefore);
+      expect(accepted.status).toBe("ACCEPTED");
+
+      // 2. Reject exactly at responseDeadline (use distinct future day slot to avoid Postgres open availability exclusion constraint)
+      const slot2Start = new Date(matchStart.getTime() + 24 * 3600 * 1000);
+      const slot2End = new Date(matchEnd.getTime() + 24 * 3600 * 1000);
+      const cAvail2 = await createTestAvailability(challengerTeamId, challengerCaptainId, slot2Start, slot2End);
+      const oAvail2 = await createTestAvailability(opponentTeamId, opponentCaptainId, slot2Start, slot2End);
+      const challenge2 = await createTestChallenge(
+        challengerTeamId,
+        opponentTeamId,
+        cAvail2.id,
+        oAvail2.id,
+        challengerCaptainId,
+        "PENDING",
+        {
+          startAt: slot2Start,
+          endAt: slot2End,
+          responseDeadline: boundaryDeadline,
+        },
+      );
+
+      await expect(
+        acceptChallenge(opponentCaptainId, challenge2.id, boundaryDeadline),
+      ).rejects.toThrow(expect.objectContaining({ status: 409 }));
+
+      // 3. Reject 1 second after responseDeadline
+      const oneSecAfter = new Date(boundaryDeadline.getTime() + 1000);
+      await expect(
+        acceptChallenge(opponentCaptainId, challenge2.id, oneSecAfter),
+      ).rejects.toThrow(expect.objectContaining({ status: 409 }));
+
+      // 4. Reject at matchStart
+      await expect(
+        acceptChallenge(opponentCaptainId, challenge2.id, slot2Start),
+      ).rejects.toThrow(expect.objectContaining({ status: 409 }));
+    });
+  });
+
+  describe("organizer booking deadline calculation", () => {
+    it("calculates bookingDeadline as 24h after acceptance for far matches (> 26h away)", async () => {
+      const farStart = new Date("2026-10-20T18:00:00.000Z");
+      const farEnd = new Date("2026-10-20T20:00:00.000Z");
+      const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId, farStart, farEnd);
+      const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId, farStart, farEnd);
+
+      const challenge = await createTestChallenge(
+        challengerTeamId,
+        opponentTeamId,
+        cAvail.id,
+        oAvail.id,
+        challengerCaptainId,
+        "PENDING",
+        {
+          startAt: farStart,
+          endAt: farEnd,
+          responseDeadline: calculateChallengeResponseDeadline(baseNow, farStart),
+        },
+      );
+
+      const acceptedAt = new Date("2026-10-10T12:00:00.000Z");
+      const result = await acceptChallenge(opponentCaptainId, challenge.id, acceptedAt);
+
+      // Far match: booking deadline is exactly acceptedAt + 24 hours
+      const expectedDeadline = new Date(acceptedAt.getTime() + 24 * 3600 * 1000);
+      expect(result.bookingDeadline).toBe(expectedDeadline.toISOString());
+
+      const dbChallenge = await prisma.matchChallenge.findUnique({ where: { id: challenge.id } });
+      expect(dbChallenge?.bookingDeadline?.toISOString()).toBe(expectedDeadline.toISOString());
     });
 
-    it("repeating acceptChallenge returns current state without duplicate side effects", async () => {
+    it("calculates bookingDeadline as 2h before match start for near matches (< 26h away)", async () => {
+      const nearStart = new Date("2026-10-10T20:00:00.000Z"); // 8h after acceptedAt
+      const nearEnd = new Date("2026-10-10T22:00:00.000Z");
+      const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId, nearStart, nearEnd);
+      const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId, nearStart, nearEnd);
+
+      const challenge = await createTestChallenge(
+        challengerTeamId,
+        opponentTeamId,
+        cAvail.id,
+        oAvail.id,
+        challengerCaptainId,
+        "PENDING",
+        {
+          startAt: nearStart,
+          endAt: nearEnd,
+          responseDeadline: calculateChallengeResponseDeadline(baseNow, nearStart),
+        },
+      );
+
+      const acceptedAt = new Date("2026-10-10T12:00:00.000Z");
+      const result = await acceptChallenge(opponentCaptainId, challenge.id, acceptedAt);
+
+      // Near match (8h away): 2h before start is 18:00 (earlier than 24h)
+      const expectedDeadline = new Date(nearStart.getTime() - 2 * 3600 * 1000);
+      expect(result.bookingDeadline).toBe(expectedDeadline.toISOString());
+
+      const dbChallenge = await prisma.matchChallenge.findUnique({ where: { id: challenge.id } });
+      expect(dbChallenge?.bookingDeadline?.toISOString()).toBe(expectedDeadline.toISOString());
+    });
+  });
+
+  describe("retry behavior and idempotency", () => {
+    it("repeating acceptChallenge returns identical state without altering respondedAt or bookingDeadline", async () => {
       const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId);
       const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId);
 
@@ -361,17 +475,15 @@ describe("challenge transitions (integration)", () => {
       const firstResult = await acceptChallenge(opponentCaptainId, challenge.id, firstAcceptTime);
       expect(firstResult.status).toBe("ACCEPTED");
 
-      // Repeat with a later timestamp
       const laterTime = new Date("2026-10-10T15:00:00.000Z");
       const repeatResult = await acceptChallenge(opponentCaptainId, challenge.id, laterTime);
 
       expect(repeatResult.status).toBe("ACCEPTED");
-      // Must retain original respondedAt and bookingDeadline
       expect(repeatResult.respondedAt).toBe(firstAcceptTime.toISOString());
       expect(repeatResult.bookingDeadline).toBe(firstResult.bookingDeadline);
     });
 
-    it("rejects accept from non-opponent captain with 403", async () => {
+    it("repeating declineChallenge returns identical state without altering respondedAt", async () => {
       const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId);
       const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId);
 
@@ -383,20 +495,87 @@ describe("challenge transitions (integration)", () => {
         challengerCaptainId,
       );
 
-      // Challenger captain cannot accept
-      await expect(
-        acceptChallenge(challengerCaptainId, challenge.id, baseNow),
-      ).rejects.toThrow(expect.objectContaining({ status: 403 }));
+      const firstDeclineTime = new Date("2026-10-10T12:00:00.000Z");
+      const firstResult = await declineChallenge(opponentCaptainId, challenge.id, firstDeclineTime);
+      expect(firstResult.status).toBe("DECLINED");
 
-      // Non-captain user cannot accept
-      await expect(
-        acceptChallenge(nonCaptainUserId, challenge.id, baseNow),
-      ).rejects.toThrow(expect.objectContaining({ status: 403 }));
+      const laterTime = new Date("2026-10-10T15:00:00.000Z");
+      const repeatResult = await declineChallenge(opponentCaptainId, challenge.id, laterTime);
+
+      expect(repeatResult.status).toBe("DECLINED");
+      expect(repeatResult.respondedAt).toBe(firstDeclineTime.toISOString());
+    });
+
+    it("repeating cancelChallenge returns identical state without altering cancelledAt", async () => {
+      const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId);
+      const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId);
+
+      const challenge = await createTestChallenge(
+        challengerTeamId,
+        opponentTeamId,
+        cAvail.id,
+        oAvail.id,
+        challengerCaptainId,
+      );
+
+      const firstCancelTime = new Date("2026-10-10T12:00:00.000Z");
+      const firstResult = await cancelChallenge(challengerCaptainId, challenge.id, firstCancelTime);
+      expect(firstResult.status).toBe("CANCELLED");
+
+      const laterTime = new Date("2026-10-10T15:00:00.000Z");
+      const repeatResult = await cancelChallenge(challengerCaptainId, challenge.id, laterTime);
+
+      expect(repeatResult.status).toBe("CANCELLED");
+      expect(repeatResult.cancelledAt).toBe(firstCancelTime.toISOString());
     });
   });
 
-  describe("declineChallenge", () => {
-    it("declines a pending challenge without modifying availability rows or other challenges", async () => {
+  describe("cancellation permissions", () => {
+    it("allows organizer captain to cancel in PENDING and in ACCEPTED state before bookingDeadline", async () => {
+      const cAvail1 = await createTestAvailability(challengerTeamId, challengerCaptainId);
+      const oAvail1 = await createTestAvailability(opponentTeamId, opponentCaptainId);
+
+      const pendingChallenge = await createTestChallenge(
+        challengerTeamId,
+        opponentTeamId,
+        cAvail1.id,
+        oAvail1.id,
+        challengerCaptainId,
+      );
+
+      const cancelTime = new Date("2026-10-10T13:00:00.000Z");
+      const cancelledPending = await cancelChallenge(challengerCaptainId, pendingChallenge.id, cancelTime);
+      expect(cancelledPending.status).toBe("CANCELLED");
+
+      // ACCEPTED state before bookingDeadline on distinct day slot
+      const slot2Start = new Date(matchStart.getTime() + 24 * 3600 * 1000);
+      const slot2End = new Date(matchEnd.getTime() + 24 * 3600 * 1000);
+      const cAvail2 = await createTestAvailability(challengerTeamId, challengerCaptainId, slot2Start, slot2End);
+      const oAvail2 = await createTestAvailability(opponentTeamId, opponentCaptainId, slot2Start, slot2End);
+      const acceptedTime = new Date("2026-10-10T11:00:00.000Z");
+      const bookingDl = calculateChallengeBookingDeadline(acceptedTime, slot2Start);
+
+      const acceptedChallenge = await createTestChallenge(
+        challengerTeamId,
+        opponentTeamId,
+        cAvail2.id,
+        oAvail2.id,
+        challengerCaptainId,
+        "ACCEPTED",
+        {
+          startAt: slot2Start,
+          endAt: slot2End,
+          respondedAt: acceptedTime,
+          bookingDeadline: bookingDl,
+        },
+      );
+
+      const cancelledAccepted = await cancelChallenge(challengerCaptainId, acceptedChallenge.id, cancelTime);
+      expect(cancelledAccepted.status).toBe("CANCELLED");
+      expect(cancelledAccepted.cancelledAt).toBe(cancelTime.toISOString());
+    });
+
+    it("rejects cancel from opponent captain, team member, and unrelated user with 403", async () => {
       const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId);
       const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId);
 
@@ -408,30 +587,46 @@ describe("challenge transitions (integration)", () => {
         challengerCaptainId,
       );
 
-      const declineTime = new Date("2026-10-10T12:00:00.000Z");
-      const declined = await declineChallenge(opponentCaptainId, challenge.id, declineTime);
+      // Opponent captain cannot cancel
+      await expect(
+        cancelChallenge(opponentCaptainId, challenge.id, baseNow),
+      ).rejects.toThrow(expect.objectContaining({ status: 403 }));
 
-      expect(declined.status).toBe("DECLINED");
-      expect(declined.respondedAt).toBe(declineTime.toISOString());
+      // Non-captain squad member cannot cancel
+      await expect(
+        cancelChallenge(nonCaptainUserId, challenge.id, baseNow),
+      ).rejects.toThrow(expect.objectContaining({ status: 403 }));
 
-      // Availability rows must remain OPEN
-      const [cDb, oDb] = await Promise.all([
-        prisma.teamAvailability.findUnique({ where: { id: cAvail.id } }),
-        prisma.teamAvailability.findUnique({ where: { id: oAvail.id } }),
-      ]);
-      expect(cDb?.status).toBe("OPEN");
-      expect(oDb?.status).toBe("OPEN");
-
-      // Repeat decline is idempotent
-      const repeatDeclined = await declineChallenge(
-        opponentCaptainId,
-        challenge.id,
-        new Date("2026-10-10T14:00:00.000Z"),
-      );
-      expect(repeatDeclined.status).toBe("DECLINED");
-      expect(repeatDeclined.respondedAt).toBe(declineTime.toISOString());
+      // Unrelated user cannot cancel
+      await expect(
+        cancelChallenge(unrelatedUserId, challenge.id, baseNow),
+      ).rejects.toThrow(expect.objectContaining({ status: 403 }));
     });
 
+    it("rejects cancel on ACCEPTED challenge if bookingDeadline has passed with 409", async () => {
+      const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId);
+      const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId);
+
+      const pastBookingDl = new Date(baseNow.getTime() - 3600 * 1000);
+      const challenge = await createTestChallenge(
+        challengerTeamId,
+        opponentTeamId,
+        cAvail.id,
+        oAvail.id,
+        challengerCaptainId,
+        "ACCEPTED",
+        {
+          bookingDeadline: pastBookingDl,
+        },
+      );
+
+      await expect(
+        cancelChallenge(challengerCaptainId, challenge.id, baseNow),
+      ).rejects.toThrow(expect.objectContaining({ status: 409 }));
+    });
+  });
+
+  describe("decline permissions", () => {
     it("rejects decline from non-opponent captain with 403", async () => {
       const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId);
       const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId);
@@ -447,121 +642,31 @@ describe("challenge transitions (integration)", () => {
       await expect(
         declineChallenge(challengerCaptainId, challenge.id, baseNow),
       ).rejects.toThrow(expect.objectContaining({ status: 403 }));
-    });
-  });
-
-  describe("cancelChallenge", () => {
-    it("organizer cancels PENDING challenge; leaves availability rows unchanged", async () => {
-      const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId);
-      const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId);
-
-      const challenge = await createTestChallenge(
-        challengerTeamId,
-        opponentTeamId,
-        cAvail.id,
-        oAvail.id,
-        challengerCaptainId,
-      );
-
-      const cancelTime = new Date("2026-10-10T13:00:00.000Z");
-      const cancelled = await cancelChallenge(challengerCaptainId, challenge.id, cancelTime);
-
-      expect(cancelled.status).toBe("CANCELLED");
-      expect(cancelled.cancelledAt).toBe(cancelTime.toISOString());
-
-      // Availabilities remain OPEN
-      const [cDb, oDb] = await Promise.all([
-        prisma.teamAvailability.findUnique({ where: { id: cAvail.id } }),
-        prisma.teamAvailability.findUnique({ where: { id: oAvail.id } }),
-      ]);
-      expect(cDb?.status).toBe("OPEN");
-      expect(oDb?.status).toBe("OPEN");
-
-      // Repeat cancel is idempotent
-      const repeatCancelled = await cancelChallenge(
-        challengerCaptainId,
-        challenge.id,
-        new Date("2026-10-10T15:00:00.000Z"),
-      );
-      expect(repeatCancelled.status).toBe("CANCELLED");
-      expect(repeatCancelled.cancelledAt).toBe(cancelTime.toISOString());
-    });
-
-    it("organizer cancels ACCEPTED challenge before bookingDeadline; leaves availability rows unchanged", async () => {
-      const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId);
-      const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId);
-
-      const acceptedTime = new Date("2026-10-10T11:00:00.000Z");
-      const bookingDl = calculateChallengeBookingDeadline(acceptedTime, matchStart);
-
-      const challenge = await createTestChallenge(
-        challengerTeamId,
-        opponentTeamId,
-        cAvail.id,
-        oAvail.id,
-        challengerCaptainId,
-        "ACCEPTED",
-        {
-          respondedAt: acceptedTime,
-          bookingDeadline: bookingDl,
-        },
-      );
-
-      const cancelTime = new Date("2026-10-10T14:00:00.000Z");
-      const cancelled = await cancelChallenge(challengerCaptainId, challenge.id, cancelTime);
-
-      expect(cancelled.status).toBe("CANCELLED");
-      expect(cancelled.cancelledAt).toBe(cancelTime.toISOString());
-      expect(cancelled.respondedAt).toBe(acceptedTime.toISOString());
-    });
-
-    it("rejects cancel from opponent captain with 403", async () => {
-      const cAvail = await createTestAvailability(challengerTeamId, challengerCaptainId);
-      const oAvail = await createTestAvailability(opponentTeamId, opponentCaptainId);
-
-      const challenge = await createTestChallenge(
-        challengerTeamId,
-        opponentTeamId,
-        cAvail.id,
-        oAvail.id,
-        challengerCaptainId,
-      );
 
       await expect(
-        cancelChallenge(opponentCaptainId, challenge.id, baseNow),
+        declineChallenge(nonCaptainUserId, challenge.id, baseNow),
       ).rejects.toThrow(expect.objectContaining({ status: 403 }));
     });
   });
 
-  describe("expireDueChallenges", () => {
-    it("expires challenges whose responseDeadline or bookingDeadline has elapsed", async () => {
+  describe("expireDueChallenges with fixed clock (no sleeps)", () => {
+    it("evaluates exact responseDeadline and bookingDeadline boundaries using fixed clock", async () => {
+      const fixedBoundary = new Date("2026-10-10T12:00:00.000Z");
       const dayMs = 24 * 3600 * 1000;
       const slot1Start = new Date(matchStart.getTime() + 1 * dayMs);
       const slot1End = new Date(matchEnd.getTime() + 1 * dayMs);
       const slot2Start = new Date(matchStart.getTime() + 2 * dayMs);
       const slot2End = new Date(matchEnd.getTime() + 2 * dayMs);
-      const slot3Start = new Date(matchStart.getTime() + 3 * dayMs);
-      const slot3End = new Date(matchEnd.getTime() + 3 * dayMs);
-      const slot4Start = new Date(matchStart.getTime() + 4 * dayMs);
-      const slot4End = new Date(matchEnd.getTime() + 4 * dayMs);
 
-      const [cAvail1, oAvail1, cAvail2, oAvail2, cAvail3, oAvail3, cAvail4, oAvail4] =
-        await Promise.all([
-          createTestAvailability(challengerTeamId, challengerCaptainId, slot1Start, slot1End),
-          createTestAvailability(opponentTeamId, opponentCaptainId, slot1Start, slot1End),
-          createTestAvailability(challengerTeamId, challengerCaptainId, slot2Start, slot2End),
-          createTestAvailability(opponentTeamId, opponentCaptainId, slot2Start, slot2End),
-          createTestAvailability(challengerTeamId, challengerCaptainId, slot3Start, slot3End),
-          createTestAvailability(opponentTeamId, opponentCaptainId, slot3Start, slot3End),
-          createTestAvailability(challengerTeamId, challengerCaptainId, slot4Start, slot4End),
-          createTestAvailability(opponentTeamId, opponentCaptainId, slot4Start, slot4End),
-        ]);
+      const [cAvail1, oAvail1, cAvail2, oAvail2] = await Promise.all([
+        createTestAvailability(challengerTeamId, challengerCaptainId, slot1Start, slot1End),
+        createTestAvailability(opponentTeamId, opponentCaptainId, slot1Start, slot1End),
+        createTestAvailability(challengerTeamId, challengerCaptainId, slot2Start, slot2End),
+        createTestAvailability(opponentTeamId, opponentCaptainId, slot2Start, slot2End),
+      ]);
 
-      const pastDeadline = new Date("2026-10-10T09:00:00.000Z");
-      const futureDeadline = new Date("2026-10-10T18:00:00.000Z");
-
-      // Due PENDING challenge
-      const duePending = await createTestChallenge(
+      // 1. Pending challenge with exact responseDeadline
+      const pendingChallenge = await createTestChallenge(
         challengerTeamId,
         opponentTeamId,
         cAvail1.id,
@@ -571,71 +676,46 @@ describe("challenge transitions (integration)", () => {
         {
           startAt: slot1Start,
           endAt: slot1End,
-          responseDeadline: pastDeadline,
+          responseDeadline: fixedBoundary,
         },
       );
 
-      // Future PENDING challenge
-      const futurePending = await createTestChallenge(
+      // 2. Accepted challenge with exact bookingDeadline
+      const acceptedChallenge = await createTestChallenge(
         challengerTeamId,
         opponentTeamId,
         cAvail2.id,
         oAvail2.id,
         challengerCaptainId,
-        "PENDING",
+        "ACCEPTED",
         {
           startAt: slot2Start,
           endAt: slot2End,
-          responseDeadline: futureDeadline,
+          bookingDeadline: fixedBoundary,
         },
       );
 
-      // Due ACCEPTED challenge
-      const dueAccepted = await createTestChallenge(
-        challengerTeamId,
-        opponentTeamId,
-        cAvail3.id,
-        oAvail3.id,
-        challengerCaptainId,
-        "ACCEPTED",
-        {
-          startAt: slot3Start,
-          endAt: slot3End,
-          bookingDeadline: pastDeadline,
-        },
-      );
+      // Fixed clock: 1ms before boundary -> neither should expire
+      const beforeTime = new Date(fixedBoundary.getTime() - 1);
+      await expireDueChallenges(beforeTime);
 
-      // Future ACCEPTED challenge
-      const futureAccepted = await createTestChallenge(
-        challengerTeamId,
-        opponentTeamId,
-        cAvail4.id,
-        oAvail4.id,
-        challengerCaptainId,
-        "ACCEPTED",
-        {
-          startAt: slot4Start,
-          endAt: slot4End,
-          bookingDeadline: futureDeadline,
-        },
-      );
+      const [pendingBefore, acceptedBefore] = await Promise.all([
+        prisma.matchChallenge.findUnique({ where: { id: pendingChallenge.id } }),
+        prisma.matchChallenge.findUnique({ where: { id: acceptedChallenge.id } }),
+      ]);
+      expect(pendingBefore?.status).toBe("PENDING");
+      expect(acceptedBefore?.status).toBe("ACCEPTED");
 
-      const evalTime = new Date("2026-10-10T12:00:00.000Z");
-      const expireResult = await expireDueChallenges(evalTime);
-
+      // Fixed clock: exactly at boundary -> BOTH must expire
+      const expireResult = await expireDueChallenges(fixedBoundary);
       expect(expireResult.count).toBeGreaterThanOrEqual(2);
 
-      const [duePendingDb, futurePendingDb, dueAcceptedDb, futureAcceptedDb] = await Promise.all([
-        prisma.matchChallenge.findUnique({ where: { id: duePending.id } }),
-        prisma.matchChallenge.findUnique({ where: { id: futurePending.id } }),
-        prisma.matchChallenge.findUnique({ where: { id: dueAccepted.id } }),
-        prisma.matchChallenge.findUnique({ where: { id: futureAccepted.id } }),
+      const [pendingAt, acceptedAt] = await Promise.all([
+        prisma.matchChallenge.findUnique({ where: { id: pendingChallenge.id } }),
+        prisma.matchChallenge.findUnique({ where: { id: acceptedChallenge.id } }),
       ]);
-
-      expect(duePendingDb?.status).toBe("EXPIRED");
-      expect(dueAcceptedDb?.status).toBe("EXPIRED");
-      expect(futurePendingDb?.status).toBe("PENDING");
-      expect(futureAcceptedDb?.status).toBe("ACCEPTED");
+      expect(pendingAt?.status).toBe("EXPIRED");
+      expect(acceptedAt?.status).toBe("EXPIRED");
     });
   });
 });

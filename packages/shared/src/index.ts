@@ -6,4 +6,6 @@ export * from "./auth";
 export * from "./team";
 export * from "./pitch";
 export * from "./matchmaking";
+export * from "./booking";
 export * from "./registration-error";
+export * from "./match";

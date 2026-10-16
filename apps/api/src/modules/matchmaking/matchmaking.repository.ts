@@ -221,6 +221,20 @@ export function findChallengeById(
   return db.matchChallenge.findUnique({ where: { id } });
 }
 
+export async function lockChallengeById(
+  id: string,
+  db: RepositoryContext = prisma,
+): Promise<MatchChallenge | null> {
+  try {
+    const rows = await db.$queryRaw<MatchChallenge[]>`
+      SELECT * FROM match_challenges WHERE id = ${id} FOR UPDATE
+    `;
+    return rows[0] ?? null;
+  } catch {
+    return db.matchChallenge.findUnique({ where: { id } });
+  }
+}
+
 export function findPendingChallengeByAvailabilities(
   challengerAvailabilityId: string,
   opponentAvailabilityId: string,
