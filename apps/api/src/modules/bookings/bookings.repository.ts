@@ -203,6 +203,22 @@ export function findActiveBookingByChallengeId(
   });
 }
 
+export function findConflictingBooking(
+  pitchId: string,
+  startAt: Date,
+  endAt: Date,
+  db: RepositoryContext = prisma,
+): Promise<Booking | null> {
+  return db.booking.findFirst({
+    where: {
+      pitchId,
+      status: { in: ["PENDING_OWNER_CONFIRMATION", "CONFIRMED"] },
+      startAt: { lt: endAt },
+      endAt: { gt: startAt },
+    },
+  });
+}
+
 export function findBookingsByChallengeId(
   challengeId: string,
   db: RepositoryContext = prisma,

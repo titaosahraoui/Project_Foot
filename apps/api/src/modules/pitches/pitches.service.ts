@@ -16,6 +16,7 @@ import {
   timeStringToMinutes,
   UpdatePitchInput,
 } from "@footconnect/shared";
+import type { RepositoryContext } from "../../lib/transaction";
 import { HttpError } from "../../middleware/error-handler";
 import { getBlockingBookingRangesForPitch } from "../bookings/bookings.service";
 import { computeAvailableSlots } from "./inventory";
@@ -160,10 +161,30 @@ export async function createPitch(userId: string, input: CreatePitchInput): Prom
   return toPitchDetail(pitch);
 }
 
-export async function getPitch(id: string): Promise<PitchDetail> {
-  const pitch = await repo.findPitchById(id);
+export async function getPitch(id: string, tx?: RepositoryContext): Promise<PitchDetail> {
+  const pitch = await repo.findPitchById(id, tx);
   if (!pitch) throw new HttpError(404, "Pitch not found");
   return toPitchDetail(pitch);
+}
+
+export async function hasConflictingPitchBlock(
+  pitchId: string,
+  startAt: Date,
+  endAt: Date,
+  tx?: RepositoryContext,
+): Promise<boolean> {
+  const blocks = await repo.findActivePitchBlocks(pitchId, startAt, endAt, tx);
+  return blocks.length > 0;
+}
+
+export async function findActivePitchBlocks(
+  pitchId: string,
+  from: Date,
+  to: Date,
+  tx?: RepositoryContext,
+): Promise<PitchBlock[]> {
+  const blocks = await repo.findActivePitchBlocks(pitchId, from, to, tx);
+  return blocks.map(toPitchBlock);
 }
 
 export async function getMyPitches(userId: string): Promise<Pitch[]> {
@@ -178,15 +199,16 @@ export async function searchPitches(query: PitchQuery): Promise<Pitch[]> {
 
 export async function updatePitch(
   userId: string,
-  id: string,
+  pitchId: string,
   input: UpdatePitchInput,
 ): Promise<PitchDetail> {
-  const pitch = await repo.findPitchById(id);
+  const pitch = await repo.findPitchById(pitchId);
   if (!pitch) throw new HttpError(404, "Pitch not found");
   if (pitch.ownerId !== userId) {
-    throw new HttpError(403, "Only the pitch owner can edit this pitch");
+    throw new HttpError(403, "Only the pitch owner can update this pitch");
   }
-  const updated = await repo.updatePitch(id, input);
+
+  const updated = await repo.updatePitch(pitchId, input);
   return toPitchDetail(updated);
 }
 
@@ -205,7 +227,7 @@ export async function setAvailabilityRules(
   const pitch = await repo.findPitchById(pitchId);
   if (!pitch) throw new HttpError(404, "Pitch not found");
   if (pitch.ownerId !== userId) {
-    throw new HttpError(403, "Only the pitch owner can set availability rules for this pitch");
+    throw new HttpError(403, "Only the pitch owner can set availability rules");
   }
 
   validateAvailabilityRules(rulesInput);

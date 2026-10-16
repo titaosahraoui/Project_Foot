@@ -1732,3 +1732,17 @@ export async function getChallengeById(
 ): Promise<MatchChallengeRecord | null> {
   return repo.findChallengeById(challengeId, tx);
 }
+
+/**
+ * Loads and locks a challenge by id within a transaction for booking validation,
+ * sharing locks with competing updates (such as cancelChallenge).
+ */
+export async function getChallengeForBooking(
+  challengeId: string,
+  tx?: RepositoryContext,
+): Promise<MatchChallengeRecord | null> {
+  if (tx) {
+    return repo.lockChallengeById(challengeId, tx);
+  }
+  return repo.findChallengeById(challengeId, tx);
+}

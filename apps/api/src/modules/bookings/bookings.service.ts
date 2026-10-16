@@ -22,6 +22,8 @@ import { withTransaction, type RepositoryContext } from "../../lib/transaction";
 import { HttpError } from "../../middleware/error-handler";
 import * as matchesService from "../matches/matches.service";
 import * as matchmakingService from "../matchmaking/matchmaking.service";
+import * as pitchesService from "../pitches/pitches.service";
+import * as teamsService from "../teams/teams.service";
 import { haversineKm } from "../matchmaking/recommendation-score";
 import { assertBookingCompatible } from "./booking-compatibility";
 import * as repo from "./bookings.repository";
@@ -277,39 +279,25 @@ export async function createBooking(
         }
       }
 
-      // Load accepted challenge via client to lock/verify latest state
-      const challenge = await client.matchChallenge.findUnique({
-        where: { id: input.challengeId },
-        include: {
-          challengerTeam: {
-            include: {
-              members: {
-                where: { userId: actorId, status: "ACTIVE" },
-              },
-            },
-          },
-        },
-      });
+      // Expire due challenges in tx
+      await matchmakingService.expireDueChallenges(now, client);
+
+      // Load accepted challenge via matchmaking.service (locks row with FOR UPDATE)
+      const challenge = await matchmakingService.getChallengeForBooking(
+        input.challengeId,
+        client,
+      );
 
       if (!challenge) {
         throw new HttpError(404, "Challenge not found", "NOT_FOUND");
       }
 
-      const activeMember = challenge.challengerTeam.members[0];
-      const isChallengerCaptain = activeMember?.role === "CAPTAIN";
-
-      // Load pitch with rules and blocks via client
-      const pitch = await client.pitch.findUnique({
-        where: { id: input.pitchId },
-        include: {
-          availabilityRules: { where: { isActive: true } },
-          blocks: { where: { cancelledAt: null } },
-        },
-      });
-
-      if (!pitch) {
-        throw new HttpError(404, "Pitch not found", "NOT_FOUND");
-      }
+      // Verify challenger captaincy via teams.service
+      const isChallengerCaptain = await teamsService.isTeamCaptain(
+        challenge.challengerTeamId,
+        actorId,
+        client,
+      );
 
       const reqStart = new Date(input.startAt);
       const reqEnd = new Date(input.endAt);
@@ -318,30 +306,8 @@ export async function createBooking(
         throw new HttpError(400, "Invalid startAt or endAt date format", "VALIDATION_ERROR");
       }
 
-      const rules = pitch.availabilityRules.map((r) => ({
-        id: r.id,
-        pitchId: r.pitchId,
-        dayOfWeek: r.dayOfWeek,
-        startMinute: r.startMinute,
-        endMinute: r.endMinute,
-        startTime: `${String(Math.floor(r.startMinute / 60)).padStart(2, "0")}:${String(r.startMinute % 60).padStart(2, "0")}`,
-        endTime: `${String(Math.floor(r.endMinute / 60)).padStart(2, "0")}:${String(r.endMinute % 60).padStart(2, "0")}`,
-        timezone: "Africa/Algiers" as const,
-        isActive: r.isActive,
-        createdAt: r.createdAt.toISOString(),
-        updatedAt: r.updatedAt.toISOString(),
-      }));
-
-      const blocks = pitch.blocks.map((b) => ({
-        id: b.id,
-        pitchId: b.pitchId,
-        startAt: b.startAt.toISOString(),
-        endAt: b.endAt.toISOString(),
-        reason: b.reason,
-        createdById: b.createdById,
-        createdAt: b.createdAt.toISOString(),
-        cancelledAt: b.cancelledAt ? b.cancelledAt.toISOString() : null,
-      }));
+      // Load pitch with rules and blocks via pitches.service
+      const pitch = await pitchesService.getPitch(input.pitchId, client);
 
       // Apply compatibility assertions first (actor is organizer/captain, window, format, distance, rules)
       const compatibility = assertBookingCompatible({
@@ -367,10 +333,10 @@ export async function createBooking(
           size: pitch.size,
           lat: pitch.lat,
           lng: pitch.lng,
-          priceAmountMinor: pitch.priceAmountMinor,
-          currency: pitch.currency,
-          availabilityRules: rules,
-          blocks,
+          priceAmountMinor: pitch.hourlyRate.amountMinor,
+          currency: pitch.hourlyRate.currency,
+          availabilityRules: pitch.availabilityRules,
+          blocks: pitch.blocks,
         },
         now,
       });
@@ -385,16 +351,14 @@ export async function createBooking(
         );
       }
 
-      // Check competing pitch blocks in tx
-      const conflictingBlock = await client.pitchBlock.findFirst({
-        where: {
-          pitchId: input.pitchId,
-          cancelledAt: null,
-          startAt: { lt: reqEnd },
-          endAt: { gt: reqStart },
-        },
-      });
-      if (conflictingBlock) {
+      // Check competing pitch blocks in tx via pitches.service
+      const hasConflictingBlock = await pitchesService.hasConflictingPitchBlock(
+        input.pitchId,
+        reqStart,
+        reqEnd,
+        client,
+      );
+      if (hasConflictingBlock) {
         throw new HttpError(
           409,
           "Selected slot is no longer available in pitch inventory or is blocked",
@@ -402,15 +366,13 @@ export async function createBooking(
         );
       }
 
-      // Check competing pitch bookings in tx
-      const conflictingBooking = await client.booking.findFirst({
-        where: {
-          pitchId: input.pitchId,
-          status: { in: ["PENDING_OWNER_CONFIRMATION", "CONFIRMED"] },
-          startAt: { lt: reqEnd },
-          endAt: { gt: reqStart },
-        },
-      });
+      // Check competing pitch bookings in tx via bookings.repository
+      const conflictingBooking = await repo.findConflictingBooking(
+        input.pitchId,
+        reqStart,
+        reqEnd,
+        client,
+      );
       if (conflictingBooking) {
         throw new HttpError(
           409,

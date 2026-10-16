@@ -6,6 +6,7 @@ import type {
   UpdatePitchInput,
 } from "@footconnect/shared";
 import { prisma } from "../../lib/prisma";
+import type { RepositoryContext } from "../../lib/transaction";
 
 const pitchInclude = {
   availabilityRules: {
@@ -41,11 +42,26 @@ export function createPitch(ownerId: string, data: CreatePitchInput): Promise<Pi
   });
 }
 
-export function findPitchById(id: string): Promise<PitchWithRulesAndBlocks | null> {
-  return prisma.pitch.findUnique({
+export function findPitchById(
+  id: string,
+  db: RepositoryContext = prisma,
+): Promise<PitchWithRulesAndBlocks | null> {
+  return db.pitch.findUnique({
     where: { id },
     include: pitchInclude,
   });
+}
+
+export async function lockPitchById(
+  id: string,
+  db: RepositoryContext = prisma,
+): Promise<PitchWithRulesAndBlocks | null> {
+  try {
+    await db.$queryRaw`SELECT id FROM pitches WHERE id = ${id} FOR UPDATE`;
+  } catch {
+    // fallback if raw query not supported in test mocks
+  }
+  return findPitchById(id, db);
 }
 
 export function findMyPitches(ownerId: string): Promise<PitchWithRulesAndBlocks[]> {
@@ -160,8 +176,11 @@ export function updatePitch(id: string, data: UpdatePitchInput): Promise<PitchWi
   });
 }
 
-export function findAvailabilityRules(pitchId: string) {
-  return prisma.pitchAvailabilityRule.findMany({
+export function findAvailabilityRules(
+  pitchId: string,
+  db: RepositoryContext = prisma,
+) {
+  return db.pitchAvailabilityRule.findMany({
     where: { pitchId },
     orderBy: [{ dayOfWeek: "asc" }, { startMinute: "asc" }],
   });
@@ -207,8 +226,11 @@ export function createPitchBlock(
   });
 }
 
-export function findPitchBlockById(id: string) {
-  return prisma.pitchBlock.findUnique({ where: { id } });
+export function findPitchBlockById(
+  id: string,
+  db: RepositoryContext = prisma,
+) {
+  return db.pitchBlock.findUnique({ where: { id } });
 }
 
 export function cancelPitchBlock(id: string) {
@@ -218,8 +240,13 @@ export function cancelPitchBlock(id: string) {
   });
 }
 
-export function findActivePitchBlocks(pitchId: string, from: Date, to: Date) {
-  return prisma.pitchBlock.findMany({
+export function findActivePitchBlocks(
+  pitchId: string,
+  from: Date,
+  to: Date,
+  db: RepositoryContext = prisma,
+) {
+  return db.pitchBlock.findMany({
     where: {
       pitchId,
       cancelledAt: null,

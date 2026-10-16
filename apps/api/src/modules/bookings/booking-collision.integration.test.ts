@@ -361,12 +361,26 @@ describe("M08-T03: PostgreSQL Booking Collision Protection & Inventory Subtracti
     const overlappingStart = new Date("2026-10-15T19:00:00.000Z");
     const overlappingEnd = new Date("2026-10-15T20:30:00.000Z");
 
+    // Use the losing challenge (which has NO active booking) to test slot collision
+    const winningBooking = await prisma.booking.findFirst({
+      where: {
+        pitchId,
+        status: { in: ["PENDING_OWNER_CONFIRMATION", "CONFIRMED"] },
+      },
+    });
+
+    const useChallenge1 = winningBooking?.challengeId === challenge2Id;
+    const losingChallengeId = useChallenge1 ? challenge1Id : challenge2Id;
+    const losingOrganizerId = useChallenge1 ? organizer1Id : organizer2Id;
+    const losingChallengerTeamId = useChallenge1 ? team1Id : team3Id;
+    const losingOpponentTeamId = useChallenge1 ? team2Id : team4Id;
+
     const req: bookingsRepo.CreateBookingData = {
       pitchId,
-      challengeId: challenge2Id,
-      organizerUserId: organizer2Id,
-      challengerTeamId: team3Id,
-      opponentTeamId: team4Id,
+      challengeId: losingChallengeId,
+      organizerUserId: losingOrganizerId,
+      challengerTeamId: losingChallengerTeamId,
+      opponentTeamId: losingOpponentTeamId,
       startAt: overlappingStart,
       endAt: overlappingEnd,
       priceAmountMinor: 400000,

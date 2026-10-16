@@ -84,8 +84,9 @@ export async function assertActiveCaptain(
   teamId: string,
   userId: string,
   allowArchived = false,
+  tx?: RepositoryContext,
 ): Promise<TeamWithMembers> {
-  const team = await repo.findTeamById(teamId);
+  const team = await repo.findTeamById(teamId, tx);
   if (!team) {
     throw new HttpError(404, "Team not found");
   }
@@ -97,6 +98,17 @@ export async function assertActiveCaptain(
     throw new HttpError(403, "Only the team captain can do that");
   }
   return team;
+}
+
+export async function isTeamCaptain(
+  teamId: string,
+  userId: string,
+  tx?: RepositoryContext,
+): Promise<boolean> {
+  const membership = await repo.findMembership(teamId, userId, tx);
+  return Boolean(
+    membership && membership.role === "CAPTAIN" && membership.status === "ACTIVE",
+  );
 }
 
 export async function getActiveCaptainId(
