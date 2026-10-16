@@ -2,6 +2,7 @@ import { z } from "zod";
 import { matchFormatSchema } from "./domain";
 import { offlinePaymentStatusSchema } from "./booking";
 import { paginationQuerySchema } from "./common";
+import { playerPositionSchema } from "./user";
 
 export const matchStatusSchema = z.enum([
   "SCHEDULED",
@@ -192,3 +193,67 @@ export function formatMatchAlgiersLabels(
     algiersKickoffLabel: startTime,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Match Lineups (M09-T02)
+// ---------------------------------------------------------------------------
+
+export const matchLineupSlotInputSchema = z.object({
+  userId: z.string().uuid(),
+  positionCode: z.string().min(1).max(10),
+  sortOrder: z.number().int().min(0),
+});
+export type MatchLineupSlotInput = z.infer<typeof matchLineupSlotInputSchema>;
+
+export const submitMatchLineupSchema = z
+  .object({
+    formationCode: z.string().min(1).max(20),
+    slots: z.array(matchLineupSlotInputSchema).optional(),
+    players: z.array(matchLineupSlotInputSchema).optional(),
+    reason: z.string().max(280).optional(),
+    replace: z.boolean().optional(),
+  })
+  .refine((data) => data.slots !== undefined || data.players !== undefined, {
+    message: "Either slots or players must be provided",
+  });
+export type SubmitMatchLineupInput = z.infer<typeof submitMatchLineupSchema>;
+
+export const replaceMatchLineupSchema = z
+  .object({
+    formationCode: z.string().min(1).max(20),
+    slots: z.array(matchLineupSlotInputSchema).optional(),
+    players: z.array(matchLineupSlotInputSchema).optional(),
+    reason: z.string().max(280).optional(),
+  })
+  .refine((data) => data.slots !== undefined || data.players !== undefined, {
+    message: "Either slots or players must be provided",
+  });
+export type ReplaceMatchLineupInput = z.infer<typeof replaceMatchLineupSchema>;
+
+export const matchLineupPlayerSchema = z.object({
+  id: z.string().uuid(),
+  snapshotId: z.string().uuid(),
+  userId: z.string().uuid(),
+  displayName: z.string(),
+  avatarUrl: z.string().nullable(),
+  primaryPosition: playerPositionSchema.nullable().optional(),
+  positionCode: z.string(),
+  sortOrder: z.number().int().min(0),
+});
+export type MatchLineupPlayer = z.infer<typeof matchLineupPlayerSchema>;
+
+export const matchLineupSnapshotSchema = z.object({
+  id: z.string().uuid(),
+  matchId: z.string().uuid(),
+  teamId: z.string().uuid(),
+  formationCode: z.string(),
+  submittedById: z.string().uuid(),
+  submittedAt: z.string().datetime({ offset: true }),
+  version: z.number().int().positive().default(1),
+  isCurrent: z.boolean().default(true),
+  replacedAt: z.string().datetime({ offset: true }).nullable().optional(),
+  replacedById: z.string().uuid().nullable().optional(),
+  replacementReason: z.string().nullable().optional(),
+  players: z.array(matchLineupPlayerSchema),
+});
+export type MatchLineupSnapshot = z.infer<typeof matchLineupSnapshotSchema>;

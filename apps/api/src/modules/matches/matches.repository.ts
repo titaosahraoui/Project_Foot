@@ -2,6 +2,7 @@ import type {
   MatchFormat,
   MatchParticipantRole,
   MatchStatus,
+  PlayerPosition,
   Prisma,
 } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
@@ -197,5 +198,114 @@ export async function updateMatchStatusByBookingId(
     where: { bookingId },
     data: { status },
     include: matchWithParticipantsInclude,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Match Lineup Snapshots (M09-T02)
+// ---------------------------------------------------------------------------
+
+export const matchLineupSnapshotInclude = {
+  players: {
+    orderBy: { sortOrder: "asc" as const },
+  },
+} satisfies Prisma.MatchLineupSnapshotInclude;
+
+export type MatchLineupSnapshotWithPlayers = Prisma.MatchLineupSnapshotGetPayload<{
+  include: typeof matchLineupSnapshotInclude;
+}>;
+
+export interface CreateLineupSnapshotData {
+  matchId: string;
+  teamId: string;
+  formationCode: string;
+  submittedById: string;
+  version?: number;
+  isCurrent?: boolean;
+  players: Array<{
+    userId: string;
+    displayName: string;
+    avatarUrl?: string | null;
+    primaryPosition?: PlayerPosition | null;
+    positionCode: string;
+    sortOrder: number;
+  }>;
+}
+
+export async function createLineupSnapshot(
+  data: CreateLineupSnapshotData,
+  db: RepositoryContext = prisma,
+): Promise<MatchLineupSnapshotWithPlayers> {
+  return db.matchLineupSnapshot.create({
+    data: {
+      matchId: data.matchId,
+      teamId: data.teamId,
+      formationCode: data.formationCode,
+      submittedById: data.submittedById,
+      version: data.version ?? 1,
+      isCurrent: data.isCurrent ?? true,
+      players: {
+        create: data.players.map((p) => ({
+          userId: p.userId,
+          displayName: p.displayName,
+          avatarUrl: p.avatarUrl ?? null,
+          primaryPosition: p.primaryPosition ?? null,
+          positionCode: p.positionCode,
+          sortOrder: p.sortOrder,
+        })),
+      },
+    },
+    include: matchLineupSnapshotInclude,
+  });
+}
+
+export async function findLatestLineupSnapshot(
+  matchId: string,
+  teamId: string,
+  db: RepositoryContext = prisma,
+): Promise<MatchLineupSnapshotWithPlayers | null> {
+  return db.matchLineupSnapshot.findFirst({
+    where: { matchId, teamId, isCurrent: true },
+    orderBy: { version: "desc" },
+    include: matchLineupSnapshotInclude,
+  });
+}
+
+export async function findLineupSnapshotsByMatchAndTeam(
+  matchId: string,
+  teamId: string,
+  db: RepositoryContext = prisma,
+): Promise<MatchLineupSnapshotWithPlayers[]> {
+  return db.matchLineupSnapshot.findMany({
+    where: { matchId, teamId },
+    orderBy: { version: "desc" },
+    include: matchLineupSnapshotInclude,
+  });
+}
+
+export async function findCurrentLineupsByMatchId(
+  matchId: string,
+  db: RepositoryContext = prisma,
+): Promise<MatchLineupSnapshotWithPlayers[]> {
+  return db.matchLineupSnapshot.findMany({
+    where: { matchId, isCurrent: true },
+    orderBy: { submittedAt: "asc" },
+    include: matchLineupSnapshotInclude,
+  });
+}
+
+export async function supersedeLineupSnapshot(
+  snapshotId: string,
+  data: { replacedById: string; replacementReason?: string },
+  db: RepositoryContext = prisma,
+): Promise<void> {
+  await db.matchLineupSnapshot.update({
+    where: { id: snapshotId },
+    data: {
+      isCurrent: false,
+      replacedAt: new Date(),
+      replacedById: data.replacedById,
+      replacementReason: data.replacementReason ?? null,
+    },
   });
 }

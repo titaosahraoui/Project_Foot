@@ -1,21 +1,29 @@
 import type {
+  FormatCode,
   ListMatchesQuery,
   MatchDetail,
   MatchFormat,
+  MatchLineupSnapshot,
   MatchParticipantRole,
   MatchStatus,
   MatchSummary,
   OfflinePaymentStatus,
   PaginatedMatches,
+  ReplaceMatchLineupInput,
   ScheduledMatchSummary,
+  SubmitMatchLineupInput,
 } from "@footconnect/shared";
 import { formatMatchAlgiersLabels } from "@footconnect/shared";
 import { prisma } from "../../lib/prisma";
-import type { RepositoryContext } from "../../lib/transaction";
+import { withTransaction, type RepositoryContext } from "../../lib/transaction";
 import { HttpError } from "../../middleware/error-handler";
 import * as teamsService from "../teams/teams.service";
 import * as repo from "./matches.repository";
-import type { MatchWithDetail, MatchWithParticipants } from "./matches.repository";
+import type {
+  MatchLineupSnapshotWithPlayers,
+  MatchWithDetail,
+  MatchWithParticipants,
+} from "./matches.repository";
 
 export interface ScheduleMatchInput {
   bookingId: string;
@@ -171,6 +179,41 @@ export function toMatchDetail(
       role: userRoleInMatch,
       allowedActions,
     },
+  };
+}
+
+export function toMatchLineupSnapshot(
+  snapshot: MatchLineupSnapshotWithPlayers,
+): MatchLineupSnapshot {
+  return {
+    id: snapshot.id,
+    matchId: snapshot.matchId,
+    teamId: snapshot.teamId,
+    formationCode: snapshot.formationCode,
+    submittedById: snapshot.submittedById,
+    submittedAt:
+      snapshot.submittedAt instanceof Date
+        ? snapshot.submittedAt.toISOString()
+        : new Date(snapshot.submittedAt).toISOString(),
+    version: snapshot.version,
+    isCurrent: snapshot.isCurrent,
+    replacedAt: snapshot.replacedAt
+      ? snapshot.replacedAt instanceof Date
+        ? snapshot.replacedAt.toISOString()
+        : new Date(snapshot.replacedAt).toISOString()
+      : null,
+    replacedById: snapshot.replacedById ?? null,
+    replacementReason: snapshot.replacementReason ?? null,
+    players: (snapshot.players ?? []).map((p) => ({
+      id: p.id,
+      snapshotId: p.snapshotId,
+      userId: p.userId,
+      displayName: p.displayName,
+      avatarUrl: p.avatarUrl ?? null,
+      primaryPosition: (p.primaryPosition as any) ?? null,
+      positionCode: p.positionCode,
+      sortOrder: p.sortOrder,
+    })),
   };
 }
 
@@ -454,4 +497,184 @@ export async function getOwnerMatches(
     page,
     pageSize,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Match Lineup Snapshots (M09-T02)
+// ---------------------------------------------------------------------------
+
+/**
+ * Submits a match lineup snapshot for a participant team.
+ *
+ * Rules:
+ * - Only the designated captain for that team may submit before match start.
+ * - Format and active membership are validated through teams.service (never teams.repository).
+ * - First submission creates an immutable snapshot with version = 1.
+ * - Before deadline, replacement is allowed ONLY through an audited replace command that
+ *   retains the previous snapshot version and increments version.
+ * - After match start, returns 409.
+ */
+export async function submitMatchLineup(
+  actorId: string,
+  matchId: string,
+  teamId: string,
+  input: SubmitMatchLineupInput,
+  options?: { isReplacement?: boolean; reason?: string },
+  now: Date = new Date(),
+): Promise<MatchLineupSnapshot> {
+  const match = await repo.findMatchById(matchId);
+  if (!match) {
+    throw new HttpError(404, "Match not found", "NOT_FOUND");
+  }
+
+  const isHome = match.homeTeamId === teamId;
+  const isAway = match.awayTeamId === teamId;
+  if (!isHome && !isAway) {
+    throw new HttpError(400, "Team is not a participant in this match", "VALIDATION_ERROR");
+  }
+
+  const designatedCaptainId = isHome ? match.homeCaptainId : match.awayCaptainId;
+  if (actorId !== designatedCaptainId) {
+    throw new HttpError(
+      403,
+      "Only the designated captain for that team may submit before match start",
+      "FORBIDDEN",
+    );
+  }
+
+  const startAt = match.startAt instanceof Date ? match.startAt : new Date(match.startAt);
+  if (now >= startAt) {
+    throw new HttpError(
+      409,
+      "Lineup submission is closed after match start",
+      "CONFLICT",
+    );
+  }
+
+  const slots = input.slots ?? (input as any).players;
+  if (!slots || !Array.isArray(slots) || slots.length === 0) {
+    throw new HttpError(400, "Lineup slots are required", "VALIDATION_ERROR");
+  }
+
+  const isReplacement = options?.isReplacement ?? input.replace ?? false;
+  const existing = await repo.findLatestLineupSnapshot(matchId, teamId);
+
+  if (!isReplacement && existing) {
+    throw new HttpError(
+      409,
+      "Lineup already submitted for this match and team. Replacement requires an audited replace command.",
+      "CONFLICT",
+    );
+  }
+
+  if (isReplacement && !existing) {
+    throw new HttpError(
+      404,
+      "No existing lineup snapshot found to replace",
+      "NOT_FOUND",
+    );
+  }
+
+  // Validate active membership and format rules through teams.service
+  const memberMap = await teamsService.validateMatchLineup(
+    teamId,
+    match.format as FormatCode,
+    {
+      formationCode: input.formationCode,
+      slots,
+    },
+  );
+
+  return withTransaction(async (tx) => {
+    let nextVersion = 1;
+    if (isReplacement && existing) {
+      await repo.supersedeLineupSnapshot(
+        existing.id,
+        {
+          replacedById: actorId,
+          replacementReason: options?.reason ?? input.reason ?? "Captain lineup replacement",
+        },
+        tx,
+      );
+      nextVersion = existing.version + 1;
+    }
+
+    const snapshot = await repo.createLineupSnapshot(
+      {
+        matchId,
+        teamId,
+        formationCode: input.formationCode,
+        submittedById: actorId,
+        version: nextVersion,
+        isCurrent: true,
+        players: slots.map((s) => {
+          const member = memberMap.get(s.userId);
+          return {
+            userId: s.userId,
+            displayName: member?.displayName ?? "Player",
+            avatarUrl: member?.avatarUrl ?? null,
+            primaryPosition: (member?.primaryPosition as any) ?? null,
+            positionCode: s.positionCode,
+            sortOrder: s.sortOrder,
+          };
+        }),
+      },
+      tx,
+    );
+
+    return toMatchLineupSnapshot(snapshot);
+  });
+}
+
+/**
+ * Replaces an existing lineup snapshot with an audited new version.
+ */
+export async function replaceMatchLineup(
+  actorId: string,
+  matchId: string,
+  teamId: string,
+  input: ReplaceMatchLineupInput,
+  options?: { reason?: string },
+  now: Date = new Date(),
+): Promise<MatchLineupSnapshot> {
+  return submitMatchLineup(
+    actorId,
+    matchId,
+    teamId,
+    input,
+    { isReplacement: true, reason: options?.reason ?? input.reason },
+    now,
+  );
+}
+
+/**
+ * Retrieves the current lineup snapshot for a match and team.
+ */
+export async function getMatchLineup(
+  matchId: string,
+  teamId: string,
+): Promise<MatchLineupSnapshot | null> {
+  const snapshot = await repo.findLatestLineupSnapshot(matchId, teamId);
+  return snapshot ? toMatchLineupSnapshot(snapshot) : null;
+}
+
+/**
+ * Retrieves the lineup snapshot version history for a match and team.
+ */
+export async function getMatchLineupHistory(
+  matchId: string,
+  teamId: string,
+): Promise<MatchLineupSnapshot[]> {
+  const snapshots = await repo.findLineupSnapshotsByMatchAndTeam(matchId, teamId);
+  return snapshots.map(toMatchLineupSnapshot);
+}
+
+/**
+ * Retrieves all current lineups for a match (home and away).
+ */
+export async function getMatchLineups(
+  matchId: string,
+): Promise<MatchLineupSnapshot[]> {
+  const snapshots = await repo.findCurrentLineupsByMatchId(matchId);
+  return snapshots.map(toMatchLineupSnapshot);
 }

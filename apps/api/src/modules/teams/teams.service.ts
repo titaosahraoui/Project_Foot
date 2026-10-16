@@ -323,3 +323,29 @@ export async function removeMember(
 
   await repo.setMembershipLeft(teamId, targetUserId);
 }
+
+/**
+ * Validates a match lineup against active team membership and format rules,
+ * returning a map of active member player cards for snapshotting.
+ */
+export async function validateMatchLineup(
+  teamId: string,
+  format: FormatCode,
+  input: {
+    formationCode: string;
+    slots: Array<{ userId: string; positionCode: string; sortOrder: number }>;
+  },
+): Promise<Map<string, PlayerCard>> {
+  const team = await repo.findTeamById(teamId);
+  if (!team) {
+    throw new HttpError(404, "Team not found", "NOT_FOUND");
+  }
+  const activeMemberMap = new Map<string, PlayerCard>();
+  const activeMemberIds = new Set<string>();
+  for (const m of team.members) {
+    activeMemberIds.add(m.userId);
+    activeMemberMap.set(m.userId, toPlayerCard(m));
+  }
+  validateLineup(format, input as any, activeMemberIds);
+  return activeMemberMap;
+}

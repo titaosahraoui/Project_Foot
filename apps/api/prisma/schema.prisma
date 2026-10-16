@@ -47,18 +47,21 @@ model User {
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 
-  teamMemberships     TeamMembership[]
-  invitationsReceived Invitation[]     @relation("invitee")
-  invitationsSent     Invitation[]     @relation("inviter")
-  pitches             Pitch[]
-  refreshSessions     RefreshSession[]
-  organizedChallenges MatchChallenge[]
-  organizedBookings   Booking[]        @relation("organizedBookings")
-  homeCaptainMatches  Match[]          @relation("homeCaptainMatches")
-  awayCaptainMatches  Match[]          @relation("awayCaptainMatches")
-  pitchOwnerMatches   Match[]          @relation("pitchOwnerMatches")
-  matchParticipations MatchParticipant[]
-  cancelledBookings   Booking[]        @relation("cancelledBookings")
+  teamMemberships          TeamMembership[]
+  invitationsReceived      Invitation[]          @relation("invitee")
+  invitationsSent          Invitation[]          @relation("inviter")
+  pitches                  Pitch[]
+  refreshSessions          RefreshSession[]
+  organizedChallenges      MatchChallenge[]
+  organizedBookings        Booking[]             @relation("organizedBookings")
+  homeCaptainMatches       Match[]               @relation("homeCaptainMatches")
+  awayCaptainMatches       Match[]               @relation("awayCaptainMatches")
+  pitchOwnerMatches        Match[]               @relation("pitchOwnerMatches")
+  matchParticipations      MatchParticipant[]
+  cancelledBookings        Booking[]             @relation("cancelledBookings")
+  submittedLineupSnapshots MatchLineupSnapshot[] @relation("submittedLineupSnapshots")
+  replacedLineupSnapshots  MatchLineupSnapshot[] @relation("replacedLineupSnapshots")
+  matchLineupPlayers       MatchLineupPlayer[]
 
   @@map("users")
 }
@@ -187,14 +190,15 @@ model Team {
   invitations          Invitation[]
   lineups              TeamLineup[]
   availabilities       TeamAvailability[]
-  challengerChallenges MatchChallenge[]   @relation("challengerChallenges")
-  opponentChallenges   MatchChallenge[]   @relation("opponentChallenges")
-  challengerBookings   Booking[]          @relation("challengerBookings")
-  opponentBookings     Booking[]          @relation("opponentBookings")
-  homeMatches          Match[]            @relation("homeMatches")
-  awayMatches          Match[]            @relation("awayMatches")
+  challengerChallenges MatchChallenge[]      @relation("challengerChallenges")
+  opponentChallenges   MatchChallenge[]      @relation("opponentChallenges")
+  challengerBookings   Booking[]             @relation("challengerBookings")
+  opponentBookings     Booking[]             @relation("opponentBookings")
+  homeMatches          Match[]               @relation("homeMatches")
+  awayMatches          Match[]               @relation("awayMatches")
   matchParticipants    MatchParticipant[]
-  responsibleBookings  Booking[]          @relation("responsibleBookings")
+  responsibleBookings  Booking[]             @relation("responsibleBookings")
+  lineupSnapshots      MatchLineupSnapshot[]
 
   @@map("teams")
 }
@@ -481,13 +485,14 @@ model Match {
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
 
-  booking       Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  homeTeam      Team                 @relation("homeMatches", fields: [homeTeamId], references: [id], onDelete: Cascade)
-  awayTeam      Team                 @relation("awayMatches", fields: [awayTeamId], references: [id], onDelete: Cascade)
-  homeCaptain   User                 @relation("homeCaptainMatches", fields: [homeCaptainId], references: [id], onDelete: Cascade)
-  awayCaptain   User                 @relation("awayCaptainMatches", fields: [awayCaptainId], references: [id], onDelete: Cascade)
-  pitchOwner    User                 @relation("pitchOwnerMatches", fields: [pitchOwnerId], references: [id], onDelete: Cascade)
-  participants  MatchParticipant[]
+  booking         Booking               @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  homeTeam        Team                  @relation("homeMatches", fields: [homeTeamId], references: [id], onDelete: Cascade)
+  awayTeam        Team                  @relation("awayMatches", fields: [awayTeamId], references: [id], onDelete: Cascade)
+  homeCaptain     User                  @relation("homeCaptainMatches", fields: [homeCaptainId], references: [id], onDelete: Cascade)
+  awayCaptain     User                  @relation("awayCaptainMatches", fields: [awayCaptainId], references: [id], onDelete: Cascade)
+  pitchOwner      User                  @relation("pitchOwnerMatches", fields: [pitchOwnerId], references: [id], onDelete: Cascade)
+  participants    MatchParticipant[]
+  lineupSnapshots MatchLineupSnapshot[]
 
   @@index([homeTeamId, status])
   @@index([awayTeamId, status])
@@ -504,12 +509,57 @@ model MatchParticipant {
   role      MatchParticipantRole @default(HOME)
   createdAt DateTime             @default(now())
 
-  match     Match                @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  team      Team                 @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  captain   User                 @relation(fields: [captainId], references: [id], onDelete: Cascade)
+  match   Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  team    Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  captain User  @relation(fields: [captainId], references: [id], onDelete: Cascade)
 
   @@unique([matchId, teamId])
   @@index([teamId])
   @@index([captainId])
   @@map("match_participants")
+}
+
+model MatchLineupSnapshot {
+  id                String              @id @default(uuid())
+  matchId           String
+  teamId            String
+  formationCode     String
+  submittedById     String
+  submittedAt       DateTime            @default(now())
+  version           Int                 @default(1)
+  isCurrent         Boolean             @default(true)
+  replacedAt        DateTime?
+  replacedById      String?
+  replacementReason String?
+
+  match       Match               @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  team        Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  submittedBy User                @relation("submittedLineupSnapshots", fields: [submittedById], references: [id], onDelete: Cascade)
+  replacedBy  User?               @relation("replacedLineupSnapshots", fields: [replacedById], references: [id], onDelete: SetNull)
+  players     MatchLineupPlayer[]
+
+  @@unique([matchId, teamId, version])
+  @@index([matchId, teamId])
+  @@index([submittedById])
+  @@map("match_lineup_snapshots")
+}
+
+model MatchLineupPlayer {
+  id              String          @id @default(uuid())
+  snapshotId      String
+  userId          String
+  displayName     String
+  avatarUrl       String?
+  primaryPosition PlayerPosition?
+  positionCode    String
+  sortOrder       Int
+
+  snapshot MatchLineupSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  user     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, userId])
+  @@unique([snapshotId, sortOrder])
+  @@index([snapshotId])
+  @@index([userId])
+  @@map("match_lineup_players")
 }
